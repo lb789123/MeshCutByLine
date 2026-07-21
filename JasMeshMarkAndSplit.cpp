@@ -8,6 +8,33 @@ JasMeshMarkAndSplit::~JasMeshMarkAndSplit()
 {
 }
 
+std::vector<MeshCutByMark::CutEdge> JasMeshMarkAndSplit::findCutEdges(const std::vector<int>& curFaces) {
+    std::vector<MeshCutByMark::CutEdge> cutEdges;
+
+    for (int faceIdx : curFaces) {
+        for (int j = 0; j < 3; j++) {
+            int v0 = m_pMesh->face[faceIdx].V(j)->Index();
+            int v1 = m_pMesh->face[faceIdx].V((j+1)%3)->Index();
+
+            if (v0 > v1) std::swap(v0, v1);
+
+            MeshCutByMark::CutEdgeType type = m_edgeInfoManager.getEdgeType(v0, v1);
+
+            if (type != MeshCutByMark::CUT_EDGE_NONE) {
+                MeshCutByMark::CutEdge edge;
+                edge.v0 = v0;
+                edge.v1 = v1;
+                edge.faceIdx = faceIdx;
+                edge.edgeIdx = j;
+                edge.type = type;
+                cutEdges.push_back(edge);
+            }
+        }
+    }
+
+    return cutEdges;
+}
+
 void JasMeshMarkAndSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRegs)
 {
 	//先构建所有mesh的边，并且标记分割边：边左右mark不同、非流形边。
