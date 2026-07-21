@@ -35,6 +35,78 @@ std::vector<MeshCutByMark::CutEdge> JasMeshMarkAndSplit::findCutEdges(const std:
     return cutEdges;
 }
 
+std::vector<std::vector<int>> JasMeshMarkAndSplit::extractBoundaryEdges(
+    const std::vector<int>& regionFaces
+) {
+    std::vector<std::vector<int>> boundaries;
+
+    // 找到所有边界边（只被一个面使用的边）
+    std::vector<std::pair<int,int>> boundaryEdges;
+    std::unordered_map<std::pair<int,int>, int, MeshCutByMark::EdgeHash, MeshCutByMark::EdgeEqual> edgeCount;
+
+    for (int faceIdx : regionFaces) {
+        for (int j = 0; j < 3; j++) {
+            int v0 = m_pMesh->face[faceIdx].V(j)->Index();
+            int v1 = m_pMesh->face[faceIdx].V((j+1)%3)->Index();
+
+            if (v0 > v1) std::swap(v0, v1);
+
+            edgeCount[{v0, v1}]++;
+        }
+    }
+
+    // 只保留边界边
+    for (const auto& [edge, count] : edgeCount) {
+        if (count == 1) {
+            boundaryEdges.push_back(edge);
+        }
+    }
+
+    // 构建边界边的邻接关系
+    std::unordered_map<int, std::vector<int>> vertexToEdges;
+    for (int i = 0; i < (int)boundaryEdges.size(); i++) {
+        vertexToEdges[boundaryEdges[i].first].push_back(i);
+        vertexToEdges[boundaryEdges[i].second].push_back(i);
+    }
+
+    // 沿边界遍历形成闭合环
+    std::vector<bool> used(boundaryEdges.size(), false);
+    for (int i = 0; i < (int)boundaryEdges.size(); i++) {
+        if (used[i]) continue;
+
+        std::vector<int> boundary;
+        int startV = boundaryEdges[i].first;
+        int curV = boundaryEdges[i].second;
+        boundary.push_back(startV);
+        used[i] = true;
+
+        while (curV != startV) {
+            boundary.push_back(curV);
+
+            // 找到下一条边界边
+            bool found = false;
+            for (int edgeIdx : vertexToEdges[curV]) {
+                if (!used[edgeIdx]) {
+                    used[edgeIdx] = true;
+                    curV = (boundaryEdges[edgeIdx].first == curV) ?
+                           boundaryEdges[edgeIdx].second :
+                           boundaryEdges[edgeIdx].first;
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found) break; // 异常情况
+        }
+
+        if (boundary.size() >= 3) {
+            boundaries.push_back(boundary);
+        }
+    }
+
+    return boundaries;
+}
+
 void JasMeshMarkAndSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRegs)
 {
 	//先构建所有mesh的边，并且标记分割边：边左右mark不同、非流形边。

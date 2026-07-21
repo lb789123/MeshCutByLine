@@ -706,6 +706,87 @@ void testInitNewMark() {
     std::cout << "testInitNewMark passed" << std::endl;
 }
 
+void testExtractBoundaryEdges() {
+    // Create a single triangle
+    //
+    //   v2
+    //   / \
+    //  /   \
+    // v0 --- v1
+    //
+    CMeshO mesh;
+
+    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 3);
+    mesh.vert[0].P() = Point3m(0, 0, 0);
+    mesh.vert[1].P() = Point3m(1, 0, 0);
+    mesh.vert[2].P() = Point3m(0, 1, 0);
+
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+
+    JasMeshMarkAndSplit splitter;
+    splitter.SetMainMesh(&mesh);
+
+    std::vector<int> regionFaces = {0};
+    auto boundaries = splitter.extractBoundaryEdges(regionFaces);
+
+    // A single triangle has 3 boundary edges forming 1 closed loop
+    assert(boundaries.size() == 1);
+    assert(boundaries[0].size() == 3);
+
+    // Verify the boundary contains all 3 vertex indices
+    bool hasV0 = std::find(boundaries[0].begin(), boundaries[0].end(), 0) != boundaries[0].end();
+    bool hasV1 = std::find(boundaries[0].begin(), boundaries[0].end(), 1) != boundaries[0].end();
+    bool hasV2 = std::find(boundaries[0].begin(), boundaries[0].end(), 2) != boundaries[0].end();
+    assert(hasV0);
+    assert(hasV1);
+    assert(hasV2);
+
+    std::cout << "testExtractBoundaryEdges passed" << std::endl;
+}
+
+void testExtractBoundaryEdgesTwoTriangles() {
+    // Create two triangles sharing edge (v1, v2)
+    //
+    //   v2 ---- v3
+    //   / \     |
+    //  /   \    |
+    // v0 --- v1
+    //
+    CMeshO mesh;
+
+    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 4);
+    mesh.vert[0].P() = Point3m(0, 0, 0);
+    mesh.vert[1].P() = Point3m(1, 0, 0);
+    mesh.vert[2].P() = Point3m(0, 1, 0);
+    mesh.vert[3].P() = Point3m(1, 1, 0);
+
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+
+    JasMeshMarkAndSplit splitter;
+    splitter.SetMainMesh(&mesh);
+
+    // Both faces form one region
+    std::vector<int> regionFaces = {0, 1};
+    auto boundaries = splitter.extractBoundaryEdges(regionFaces);
+
+    // Two adjacent triangles form a quad with 4 boundary edges
+    assert(boundaries.size() == 1);
+    assert(boundaries[0].size() == 4);
+
+    // Verify the boundary contains all 4 vertex indices
+    bool hasV0 = std::find(boundaries[0].begin(), boundaries[0].end(), 0) != boundaries[0].end();
+    bool hasV1 = std::find(boundaries[0].begin(), boundaries[0].end(), 1) != boundaries[0].end();
+    bool hasV2 = std::find(boundaries[0].begin(), boundaries[0].end(), 2) != boundaries[0].end();
+    bool hasV3 = std::find(boundaries[0].begin(), boundaries[0].end(), 3) != boundaries[0].end();
+    assert(hasV0);
+    assert(hasV1);
+    assert(hasV2);
+    assert(hasV3);
+
+    std::cout << "testExtractBoundaryEdgesTwoTriangles passed" << std::endl;
+}
+
 int main() {
     testEdgeHash();
     testBuildEdgeInfo();
@@ -723,5 +804,7 @@ int main() {
     testExtractSubRegions();
     testMarkSubRegions();
     testInitNewMark();
+    testExtractBoundaryEdges();
+    testExtractBoundaryEdgesTwoTriangles();
     return 0;
 }

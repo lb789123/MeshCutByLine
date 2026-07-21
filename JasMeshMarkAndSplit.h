@@ -33,6 +33,9 @@ public:
 
 	//查找给定面集合中的切割边
 	std::vector<MeshCutByMark::CutEdge> findCutEdges(const std::vector<int>& curFaces);
+
+	//提取区域的边界边序列
+	std::vector<std::vector<int>> extractBoundaryEdges(const std::vector<int>& regionFaces);
 private:
 	CMeshO* m_pMesh = nullptr;
 	MeshCutByMark::EdgeInfoManager m_edgeInfoManager; // 边信息管理器
