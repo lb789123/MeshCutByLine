@@ -3,6 +3,7 @@
 #include <cassert>
 #include "tool/edge_info.h"
 #include "tool/polyline.h"
+#include "tool/cut_plane.h"
 #include "JasMeshMarkAndSplit.h"
 
 void testEdgeHash() {
@@ -264,6 +265,193 @@ void testConnectEdgesToPolylinesEmpty() {
     std::cout << "testConnectEdgesToPolylinesEmpty passed" << std::endl;
 }
 
+void testMakeCutPlane() {
+    // Create a test mesh with two triangles sharing edge (v1, v2)
+    //
+    //   v2 ---- v3
+    //   / \     |
+    //  /   \    |
+    // v0 --- v1
+    //
+    CMeshO mesh;
+    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 4);
+    mesh.vert[0].P() = Point3m(0, 0, 0);
+    mesh.vert[1].P() = Point3m(1, 0, 0);
+    mesh.vert[2].P() = Point3m(0, 1, 0);
+    mesh.vert[3].P() = Point3m(1, 1, 0);
+
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+
+    // Compute face normals
+    vcg::tri::UpdateNormal<CMeshO>::PerFace(mesh);
+
+    // Create a polyline along the shared edge
+    MeshCutByMark::Polyline polyline;
+    polyline.vertexIndices = {1, 2};  // edge (v1, v2)
+    polyline.startFaceIdx = 0;
+    polyline.startEdgeIdx = 2;  // edge V(2)->V(0) i.e. (v2, v0) in face 0? No, edge 0 = V(0)->V(1), edge 1 = V(1)->V(2), edge 2 = V(2)->V(0)
+    polyline.endFaceIdx = 1;
+    polyline.endEdgeIdx = 0;
+
+    MeshCutByMark::CutPlaneManager cutPlaneManager;
+
+    // Test cutting plane at the start of the polyline
+    auto planeStart = cutPlaneManager.makeCutPlane(polyline, true, &mesh);
+    assert(planeStart.Direction().Norm() > 0.99);
+
+    // The start vertex is v1 at (1,0,0)
+    // The plane should pass through this point
+    double dist = vcg::SignedDistancePlanePoint(planeStart, mesh.vert[1].P());
+    assert(std::abs(dist) < 1e-10);
+
+    // Test cutting plane at the end of the polyline
+    auto planeEnd = cutPlaneManager.makeCutPlane(polyline, false, &mesh);
+    assert(planeEnd.Direction().Norm() > 0.99);
+
+    // The end vertex is v2 at (0,1,0)
+    dist = vcg::SignedDistancePlanePoint(planeEnd, mesh.vert[2].P());
+    assert(std::abs(dist) < 1e-10);
+
+    std::cout << "testMakeCutPlane passed" << std::endl;
+}
+
+void testMakeCutPlaneLongPolyline() {
+    // Create a mesh with a polyline of 3 vertices
+    //
+    //   v2 ---- v3
+    //   / \     |
+    //  /   \    |
+    // v0 --- v1
+    //
+    CMeshO mesh;
+    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 4);
+    mesh.vert[0].P() = Point3m(0, 0, 0);
+    mesh.vert[1].P() = Point3m(1, 0, 0);
+    mesh.vert[2].P() = Point3m(0, 1, 0);
+    mesh.vert[3].P() = Point3m(1, 1, 0);
+
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+
+    vcg::tri::UpdateNormal<CMeshO>::PerFace(mesh);
+
+    // Polyline: 0 -> 1 -> 3
+    MeshCutByMark::Polyline polyline;
+    polyline.vertexIndices = {0, 1, 3};
+    polyline.startFaceIdx = 0;
+    polyline.startEdgeIdx = 0;
+    polyline.endFaceIdx = 1;
+    polyline.endEdgeIdx = 0;
+
+    MeshCutByMark::CutPlaneManager cutPlaneManager;
+
+    // Start plane should pass through v0 (0,0,0)
+    auto planeStart = cutPlaneManager.makeCutPlane(polyline, true, &mesh);
+    assert(planeStart.Direction().Norm() > 0.99);
+    double dist = vcg::SignedDistancePlanePoint(planeStart, mesh.vert[0].P());
+    assert(std::abs(dist) < 1e-10);
+
+    // End plane should pass through v3 (1,1,0)
+    auto planeEnd = cutPlaneManager.makeCutPlane(polyline, false, &mesh);
+    assert(planeEnd.Direction().Norm() > 0.99);
+    dist = vcg::SignedDistancePlanePoint(planeEnd, mesh.vert[3].P());
+    assert(std::abs(dist) < 1e-10);
+
+    // The two planes should have different directions
+    // (they are at different endpoints with different edge directions)
+    assert((planeStart.Direction() - planeEnd.Direction()).Norm() > 0.01);
+
+    std::cout << "testMakeCutPlaneLongPolyline passed" << std::endl;
+}
+
+void testIsOnMarkDiffEdge() {
+    // Create two triangles sharing edge (v1, v2) with different marks
+    //
+    //   v2 ---- v3
+    //   / \     |
+    //  /   \    |
+    // v0 --- v1
+    //
+    CMeshO mesh;
+    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 4);
+    mesh.vert[0].P() = Point3m(0, 0, 0);
+    mesh.vert[1].P() = Point3m(1, 0, 0);
+    mesh.vert[2].P() = Point3m(0, 1, 0);
+    mesh.vert[3].P() = Point3m(1, 1, 0);
+
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+
+    // Enable FF adjacency and compute topology
+    mesh.face.EnableFFAdjacency();
+    vcg::tri::UpdateTopology<CMeshO>::FaceFace(mesh);
+
+    // Enable marks and set different marks
+    mesh.face.EnableMark();
+    mesh.face[0].IMark() = 1;
+    mesh.face[1].IMark() = 2;
+
+    MeshCutByMark::CutPlaneManager cutPlaneManager;
+
+    // In face 0: edge 1 = V(1)->V(2) is the shared edge
+    // This should be a mark-diff edge
+    assert(cutPlaneManager.isOnMarkDiffEdge(0, 1, &mesh) == true);
+
+    // In face 0: edge 0 = V(0)->V(1) is a boundary edge (no adjacent face)
+    // Should return false
+    assert(cutPlaneManager.isOnMarkDiffEdge(0, 0, &mesh) == false);
+
+    // Now set same marks
+    mesh.face[0].IMark() = 1;
+    mesh.face[1].IMark() = 1;
+
+    // With same marks, the shared edge should not be a mark-diff edge
+    assert(cutPlaneManager.isOnMarkDiffEdge(0, 1, &mesh) == false);
+
+    std::cout << "testIsOnMarkDiffEdge passed" << std::endl;
+}
+
+void testSignedDistanceAndIntersection() {
+    // Create a simple XY-plane at z=0
+    vcg::Plane3d plane;
+    plane.Init(vcg::Point3d(0, 0, 0), vcg::Point3d(0, 0, 1));
+
+    MeshCutByMark::CutPlaneManager cutPlaneManager;
+
+    // Use the private methods indirectly through the public interface
+    // We test via makeCutPlane which internally uses signedDistance
+
+    // Create a minimal mesh and polyline for the test
+    CMeshO mesh;
+    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 4);
+    mesh.vert[0].P() = Point3m(0, 0, 0);
+    mesh.vert[1].P() = Point3m(1, 0, 0);
+    mesh.vert[2].P() = Point3m(0, 1, 0);
+    mesh.vert[3].P() = Point3m(1, 1, 0);
+
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::UpdateNormal<CMeshO>::PerFace(mesh);
+
+    MeshCutByMark::Polyline polyline;
+    polyline.vertexIndices = {0, 1};
+    polyline.startFaceIdx = 0;
+    polyline.startEdgeIdx = 0;
+    polyline.endFaceIdx = 0;
+    polyline.endEdgeIdx = 0;
+
+    auto planeResult = cutPlaneManager.makeCutPlane(polyline, true, &mesh);
+
+    // The plane should be well-formed
+    assert(planeResult.Direction().Norm() > 0.99);
+
+    // The start vertex (v0 at origin) should be on the plane
+    double dist = vcg::SignedDistancePlanePoint(planeResult, mesh.vert[0].P());
+    assert(std::abs(dist) < 1e-10);
+
+    std::cout << "testSignedDistanceAndIntersection passed" << std::endl;
+}
+
 int main() {
     testEdgeHash();
     testBuildEdgeInfo();
@@ -271,5 +459,9 @@ int main() {
     testConnectEdgesToPolylines();
     testConnectEdgesToPolylinesMultiple();
     testConnectEdgesToPolylinesEmpty();
+    testMakeCutPlane();
+    testMakeCutPlaneLongPolyline();
+    testIsOnMarkDiffEdge();
+    testSignedDistanceAndIntersection();
     return 0;
 }
