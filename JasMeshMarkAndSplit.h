@@ -1,3 +1,16 @@
+/**
+ * @brief MeshCutByMark - 将网格按 mark 分割成简单多边形
+ *
+ * 核心功能：
+ * 1. 按 mark 分组三角形
+ * 2. 找到切割边（mark 不同、非流形、边界）
+ * 3. 将切割边连接成折线
+ * 4. 从端点延长切割
+ * 5. 通过新标记机制得到简单多边形
+ *
+ * 输入：带有 mark 属性的三角形网格
+ * 输出：简单多边形区域列表
+ */
 #ifndef JASMESHMARKANDSPLIT_H
 #define JASMESHMARKANDSPLIT_H
 
