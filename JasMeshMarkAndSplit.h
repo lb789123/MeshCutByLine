@@ -13,10 +13,11 @@ public:
 
 	struct splitReg
 	{
-		int mark, polyInd;//归属平面标记 和平面索引
-		std::vector<int> inTris;//包含的三角形
-		vcg::Point3d normal;//法向量
-		std::vector<int> boundlines;//多边形顶点索引
+		int mark;                    // 原始平面标记
+		int newMark;                 // 新标记（简单多边形 ID）
+		std::vector<int> inTris;     // 包含的三角形索引
+		vcg::Point3d normal;         // 法向量
+		std::vector<int> boundlines; // 边界边的顶点索引序列
 	};
 
 	JasMeshMarkAndSplit();

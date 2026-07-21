@@ -787,6 +787,103 @@ void testExtractBoundaryEdgesTwoTriangles() {
     std::cout << "testExtractBoundaryEdgesTwoTriangles passed" << std::endl;
 }
 
+void testSplitMeshByMarkAndEdge() {
+    // Create two triangles sharing edge (v1, v2) with different marks
+    //
+    //   v2 ---- v3
+    //   / \     |
+    //  /   \    |
+    // v0 --- v1
+    //
+    CMeshO mesh;
+
+    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 4);
+    mesh.vert[0].P() = Point3m(0, 0, 0);
+    mesh.vert[1].P() = Point3m(1, 0, 0);
+    mesh.vert[2].P() = Point3m(0, 1, 0);
+    mesh.vert[3].P() = Point3m(1, 1, 0);
+
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+
+    // Set different marks on the two faces
+    mesh.face.EnableMark();
+    mesh.face[0].IMark() = 1;
+    mesh.face[1].IMark() = 2;
+
+    // Run the main algorithm
+    JasMeshMarkAndSplit splitter;
+    splitter.SetMainMesh(&mesh);
+
+    std::vector<JasMeshMarkAndSplit::splitReg> regions;
+    splitter.SplitMeshByMarkAndEdge(regions);
+
+    // Should produce 2 regions (one per mark)
+    assert(regions.size() == 2);
+
+    // Verify each region has correct properties
+    for (const auto& reg : regions) {
+        // Each region should have at least 1 triangle
+        assert(reg.inTris.size() >= 1);
+
+        // Normal should be well-formed
+        assert(reg.normal.Norm() > 0.99);
+
+        // newMark should be positive
+        assert(reg.newMark > 0);
+
+        // boundary should have at least 3 vertices (a triangle)
+        assert(reg.boundlines.size() >= 3);
+    }
+
+    // Verify the two regions have different marks
+    assert(regions[0].mark != regions[1].mark);
+
+    // Verify the two regions have different newMarks
+    assert(regions[0].newMark != regions[1].newMark);
+
+    std::cout << "testSplitMeshByMarkAndEdge passed" << std::endl;
+}
+
+void testSplitMeshByMarkAndEdgeSameMark() {
+    // Create two triangles sharing edge (v1, v2) with SAME mark
+    //
+    //   v2 ---- v3
+    //   / \     |
+    //  /   \    |
+    // v0 --- v1
+    //
+    CMeshO mesh;
+
+    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 4);
+    mesh.vert[0].P() = Point3m(0, 0, 0);
+    mesh.vert[1].P() = Point3m(1, 0, 0);
+    mesh.vert[2].P() = Point3m(0, 1, 0);
+    mesh.vert[3].P() = Point3m(1, 1, 0);
+
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+
+    // Same marks
+    mesh.face.EnableMark();
+    mesh.face[0].IMark() = 1;
+    mesh.face[1].IMark() = 1;
+
+    JasMeshMarkAndSplit splitter;
+    splitter.SetMainMesh(&mesh);
+
+    std::vector<JasMeshMarkAndSplit::splitReg> regions;
+    splitter.SplitMeshByMarkAndEdge(regions);
+
+    // Should produce 1 region (both faces have same mark, connected)
+    assert(regions.size() == 1);
+    assert(regions[0].inTris.size() == 2);
+    assert(regions[0].mark == 1);
+    assert(regions[0].newMark == 1);
+
+    std::cout << "testSplitMeshByMarkAndEdgeSameMark passed" << std::endl;
+}
+
 int main() {
     testEdgeHash();
     testBuildEdgeInfo();
@@ -806,5 +903,7 @@ int main() {
     testInitNewMark();
     testExtractBoundaryEdges();
     testExtractBoundaryEdgesTwoTriangles();
+    testSplitMeshByMarkAndEdge();
+    testSplitMeshByMarkAndEdgeSameMark();
     return 0;
 }

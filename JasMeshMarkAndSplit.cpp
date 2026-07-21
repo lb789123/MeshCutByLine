@@ -1,4 +1,7 @@
 #include "JasMeshMarkAndSplit.h"
+#include <vcg/complex/algorithms/update/topology.h>
+#include <vcg/complex/algorithms/update/normal.h>
+#include <map>
 
 JasMeshMarkAndSplit::JasMeshMarkAndSplit()
 {
@@ -109,29 +112,92 @@ std::vector<std::vector<int>> JasMeshMarkAndSplit::extractBoundaryEdges(
 
 void JasMeshMarkAndSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRegs)
 {
-	//先构建所有mesh的边，并且标记分割边：边左右mark不同、非流形边。
+	// Phase 1: 初始化
+	m_newMarkCounter = 1;
+	m_regionMarker.initNewMark(m_pMesh);
 
-	//从每个面开始查找不被分割边切断的区域
-	std::vector<int> fflag(m_pMesh->face.size(), 0);
+	// 构建边信息
+	m_edgeInfoManager.buildEdgeInfo(m_pMesh);
 
-	for (int i = 0; i < fflag.size(); ++i)
-	{
-		if (fflag[i])continue;
+	// 确保 FF 邻接可用并计算拓扑
+	if (!m_pMesh->face.IsFFAdjacencyEnabled()) {
+		m_pMesh->face.EnableFFAdjacency();
+	}
+	vcg::tri::UpdateTopology<CMeshO>::FaceFace(*m_pMesh);
 
-		//从i通过非递归调用得到 和i在一个面上的所有三角形
-		std::vector<int> curFaces;
+	// 计算法向量
+	vcg::tri::UpdateNormal<CMeshO>::PerFace(*m_pMesh);
 
-		//curFaces中找到分割边
-		std::vector<std::pair<int,int>> cutLines;
+	// Phase 2: 延长线切割并标记新区域
+	for (int i = 0; i < (int)m_pMesh->face.size(); i++) {
+		if (m_pMesh->face[i].IsD()) continue;
+		if (m_regionMarker.getNewMark(i) > 0) continue;  // 已处理
 
-		//分割边链接成对应的线
+		// 2.1 flood-fill 找连通区域
+		int targetMark = m_pMesh->face[i].IMark();
+		std::vector<int> curFaces = m_regionMarker.floodFill(i, targetMark, m_pMesh, m_edgeInfoManager);
 
-		//每个线延长到curFaces box范围 切割所有三角形。
+		// 2.2 找 curFaces 的切割边
+		std::vector<MeshCutByMark::CutEdge> cutEdges = findCutEdges(curFaces);
 
-		//三角形更新 并找到多个
-		std::vector<splitReg> iLocalRegs;
+		// 2.3 将切割边连接成连续折线
+		std::vector<MeshCutByMark::Polyline> polylines =
+			m_polylineManager.connectEdgesToPolylines(cutEdges, m_pMesh);
 
-		if (iLocalRegs.size())
-			retRegs.insert(retRegs.begin(), iLocalRegs.begin(), iLocalRegs.end());
+		// 2.4 从端点延长切割
+		for (const auto& polyline : polylines) {
+			// 检查首端点
+			if (!m_cutPlaneManager.isOnMarkDiffEdge(
+					polyline.startFaceIdx, polyline.startEdgeIdx, m_pMesh)) {
+				vcg::Plane3d plane = m_cutPlaneManager.makeCutPlane(polyline, true, m_pMesh);
+				for (int faceIdx : curFaces) {
+					if (!m_pMesh->face[faceIdx].IsD()) {
+						m_cutPlaneManager.cutTriangleByPlane(faceIdx, plane, m_pMesh);
+					}
+				}
+			}
+
+			// 检查尾端点
+			if (!m_cutPlaneManager.isOnMarkDiffEdge(
+					polyline.endFaceIdx, polyline.endEdgeIdx, m_pMesh)) {
+				vcg::Plane3d plane = m_cutPlaneManager.makeCutPlane(polyline, false, m_pMesh);
+				for (int faceIdx : curFaces) {
+					if (!m_pMesh->face[faceIdx].IsD()) {
+						m_cutPlaneManager.cutTriangleByPlane(faceIdx, plane, m_pMesh);
+					}
+				}
+			}
+		}
+
+		// 2.5 通过拣选得到切割后的子区域
+		std::vector<std::vector<int>> subRegions =
+			m_regionMarker.extractSubRegions(curFaces, m_pMesh);
+
+		// 2.6 每个子区域标记新 mark
+		m_regionMarker.markSubRegions(subRegions, m_pMesh, m_newMarkCounter);
+	}
+
+	// Phase 3: 根据新标记提取多边形
+	std::map<int, std::vector<int>> markToFaces;
+	for (int i = 0; i < (int)m_pMesh->face.size(); i++) {
+		if (!m_pMesh->face[i].IsD()) {
+			markToFaces[m_regionMarker.getNewMark(i)].push_back(i);
+		}
+	}
+
+	// 输出结果
+	for (const auto& [newMark, faces] : markToFaces) {
+		// 提取边界边
+		std::vector<std::vector<int>> boundaries = extractBoundaryEdges(faces);
+
+		// 构造 splitReg
+		splitReg reg;
+		reg.mark = m_pMesh->face[faces[0]].IMark();
+		reg.newMark = newMark;
+		reg.inTris = faces;
+		reg.normal = m_pMesh->face[faces[0]].N();
+		reg.boundlines = boundaries.empty() ? std::vector<int>() : boundaries[0];
+
+		retRegs.push_back(reg);
 	}
 }
