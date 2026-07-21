@@ -884,6 +884,84 @@ void testSplitMeshByMarkAndEdgeSameMark() {
     std::cout << "testSplitMeshByMarkAndEdgeSameMark passed" << std::endl;
 }
 
+void testIntegration() {
+    // Create a more complex test mesh: 6 vertices, 4 triangles, 2 mark regions
+    //
+    //   v2 ---- v3 ---- v5
+    //   / \     | \     |
+    //  /   \    |  \    |
+    // v0 --- v1   v4 --+
+    //
+    // Face 0: v0, v1, v2  (mark=1)
+    // Face 1: v1, v3, v2  (mark=1)
+    // Face 2: v1, v4, v3  (mark=2)
+    // Face 3: v4, v5, v3  (mark=2)
+    //
+    // Faces 0-1 share edge (1,2), same mark => not a cut edge
+    // Faces 1-2 share edge (1,3), different mark => cut edge
+    // Faces 2-3 share edge (3,4), same mark => not a cut edge
+    CMeshO mesh;
+
+    // Add 6 vertices
+    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 6);
+    mesh.vert[0].P() = Point3m(0, 0, 0);
+    mesh.vert[1].P() = Point3m(1, 0, 0);
+    mesh.vert[2].P() = Point3m(0, 1, 0);
+    mesh.vert[3].P() = Point3m(1, 1, 0);
+    mesh.vert[4].P() = Point3m(2, 0, 0);
+    mesh.vert[5].P() = Point3m(2, 1, 0);
+
+    // Add 4 triangles
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[4], &mesh.vert[3]);
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[4], &mesh.vert[5], &mesh.vert[3]);
+
+    // Set marks: faces 0-1 => mark 1, faces 2-3 => mark 2
+    mesh.face.EnableMark();
+    mesh.face[0].IMark() = 1;
+    mesh.face[1].IMark() = 1;
+    mesh.face[2].IMark() = 2;
+    mesh.face[3].IMark() = 2;
+
+    // Run the main algorithm
+    JasMeshMarkAndSplit splitter;
+    splitter.SetMainMesh(&mesh);
+
+    std::vector<JasMeshMarkAndSplit::splitReg> regions;
+    splitter.SplitMeshByMarkAndEdge(regions);
+
+    // Verify: should produce 2 regions (one per mark value)
+    assert(regions.size() == 2);
+
+    // Verify: all 4 triangles are assigned across regions
+    int totalFaces = 0;
+    for (const auto& reg : regions) {
+        totalFaces += reg.inTris.size();
+    }
+    assert(totalFaces == 4);
+
+    // Verify: each region has a valid boundary (at least 3 vertices forming a closed loop)
+    for (const auto& reg : regions) {
+        assert(reg.boundlines.size() >= 3);
+    }
+
+    // Verify: the two regions have different original marks
+    assert(regions[0].mark != regions[1].mark);
+
+    // Verify: each region has a well-formed normal
+    for (const auto& reg : regions) {
+        assert(reg.normal.Norm() > 0.99);
+    }
+
+    // Verify: each region has a positive newMark
+    for (const auto& reg : regions) {
+        assert(reg.newMark > 0);
+    }
+
+    std::cout << "testIntegration passed" << std::endl;
+}
+
 int main() {
     testEdgeHash();
     testBuildEdgeInfo();
@@ -905,5 +983,6 @@ int main() {
     testExtractBoundaryEdgesTwoTriangles();
     testSplitMeshByMarkAndEdge();
     testSplitMeshByMarkAndEdgeSameMark();
+    testIntegration();
     return 0;
 }
