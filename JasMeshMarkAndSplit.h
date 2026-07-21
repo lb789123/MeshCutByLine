@@ -4,6 +4,7 @@
 #include <tool/cmesh.h>
 #include <vector>
 #include "tool/edge_info.h"
+#include "tool/polyline.h"
 class JasMeshMarkAndSplit
 {
 public:
@@ -33,6 +34,7 @@ public:
 private:
 	CMeshO* m_pMesh = nullptr;
 	MeshCutByMark::EdgeInfoManager m_edgeInfoManager; // 边信息管理器
+	MeshCutByMark::PolylineManager m_polylineManager; // 折线管理器
 	std::vector<vcg::Point3i> m_edgeMarks;//对应是否是分割边
 };
 

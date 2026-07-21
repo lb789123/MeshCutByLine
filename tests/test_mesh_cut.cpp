@@ -2,6 +2,7 @@
 #include <iostream>
 #include <cassert>
 #include "tool/edge_info.h"
+#include "tool/polyline.h"
 #include "JasMeshMarkAndSplit.h"
 
 void testEdgeHash() {
@@ -183,9 +184,92 @@ void testFindCutEdges() {
     std::cout << "testFindCutEdges passed" << std::endl;
 }
 
+void testConnectEdgesToPolylines() {
+    // Create test cut edges: a chain 0-1-2-3
+    std::vector<MeshCutByMark::CutEdge> cutEdges;
+
+    // Edge 1: v0-v1
+    cutEdges.push_back({0, 1, 0, 0, MeshCutByMark::CUT_EDGE_MARK_DIFF});
+    // Edge 2: v1-v2
+    cutEdges.push_back({1, 2, 1, 0, MeshCutByMark::CUT_EDGE_MARK_DIFF});
+    // Edge 3: v2-v3
+    cutEdges.push_back({2, 3, 2, 0, MeshCutByMark::CUT_EDGE_MARK_DIFF});
+
+    MeshCutByMark::PolylineManager polylineManager;
+    CMeshO mesh; // empty mesh, only used for the API signature
+
+    auto polylines = polylineManager.connectEdgesToPolylines(cutEdges, &mesh);
+
+    // Should connect into one polyline
+    assert(polylines.size() == 1);
+    assert(polylines[0].vertexIndices.size() == 4);
+    assert(polylines[0].vertexIndices[0] == 0);
+    assert(polylines[0].vertexIndices[1] == 1);
+    assert(polylines[0].vertexIndices[2] == 2);
+    assert(polylines[0].vertexIndices[3] == 3);
+
+    std::cout << "testConnectEdgesToPolylines passed" << std::endl;
+}
+
+void testConnectEdgesToPolylinesMultiple() {
+    // Test with two separate chains: 0-1-2 and 4-5
+    std::vector<MeshCutByMark::CutEdge> cutEdges;
+
+    // Chain 1: 0-1, 1-2
+    cutEdges.push_back({0, 1, 0, 0, MeshCutByMark::CUT_EDGE_MARK_DIFF});
+    cutEdges.push_back({1, 2, 1, 0, MeshCutByMark::CUT_EDGE_MARK_DIFF});
+
+    // Chain 2: 4-5
+    cutEdges.push_back({4, 5, 2, 0, MeshCutByMark::CUT_EDGE_MARK_DIFF});
+
+    MeshCutByMark::PolylineManager polylineManager;
+    CMeshO mesh;
+
+    auto polylines = polylineManager.connectEdgesToPolylines(cutEdges, &mesh);
+
+    // Should produce 2 polylines
+    assert(polylines.size() == 2);
+
+    // Find the longer polyline (3 vertices) and the shorter one (2 vertices)
+    const MeshCutByMark::Polyline* longPoly = nullptr;
+    const MeshCutByMark::Polyline* shortPoly = nullptr;
+    for (const auto& p : polylines) {
+        if (p.vertexIndices.size() == 3) longPoly = &p;
+        if (p.vertexIndices.size() == 2) shortPoly = &p;
+    }
+
+    assert(longPoly != nullptr);
+    assert(shortPoly != nullptr);
+
+    // Long polyline: 0-1-2
+    assert(longPoly->vertexIndices[0] == 0);
+    assert(longPoly->vertexIndices[2] == 2);
+
+    // Short polyline: 4-5
+    assert(shortPoly->vertexIndices[0] == 4);
+    assert(shortPoly->vertexIndices[1] == 5);
+
+    std::cout << "testConnectEdgesToPolylinesMultiple passed" << std::endl;
+}
+
+void testConnectEdgesToPolylinesEmpty() {
+    // Empty input should return empty output
+    std::vector<MeshCutByMark::CutEdge> cutEdges;
+    MeshCutByMark::PolylineManager polylineManager;
+    CMeshO mesh;
+
+    auto polylines = polylineManager.connectEdgesToPolylines(cutEdges, &mesh);
+    assert(polylines.empty());
+
+    std::cout << "testConnectEdgesToPolylinesEmpty passed" << std::endl;
+}
+
 int main() {
     testEdgeHash();
     testBuildEdgeInfo();
     testFindCutEdges();
+    testConnectEdgesToPolylines();
+    testConnectEdgesToPolylinesMultiple();
+    testConnectEdgesToPolylinesEmpty();
     return 0;
 }
