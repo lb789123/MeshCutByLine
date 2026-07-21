@@ -1,9 +1,11 @@
 // tests/test_mesh_cut.cpp
 #include <iostream>
 #include <cassert>
+#include <algorithm>
 #include "tool/edge_info.h"
 #include "tool/polyline.h"
 #include "tool/cut_plane.h"
+#include "tool/region_marker.h"
 #include "JasMeshMarkAndSplit.h"
 
 void testEdgeHash() {
@@ -452,6 +454,258 @@ void testSignedDistanceAndIntersection() {
     std::cout << "testSignedDistanceAndIntersection passed" << std::endl;
 }
 
+void testFloodFill() {
+    // Create 2 triangles sharing edge (v1, v2), both with mark=1
+    //
+    //   v2 ---- v3
+    //   / \     |
+    //  /   \    |
+    // v0 --- v1
+    //
+    CMeshO mesh;
+
+    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 4);
+    mesh.vert[0].P() = Point3m(0, 0, 0);
+    mesh.vert[1].P() = Point3m(1, 0, 0);
+    mesh.vert[2].P() = Point3m(0, 1, 0);
+    mesh.vert[3].P() = Point3m(1, 1, 0);
+
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+
+    // Enable FF adjacency and compute topology
+    mesh.face.EnableFFAdjacency();
+    vcg::tri::UpdateTopology<CMeshO>::FaceFace(mesh);
+
+    // Enable marks and set same marks
+    mesh.face.EnableMark();
+    mesh.face[0].IMark() = 1;
+    mesh.face[1].IMark() = 1;
+
+    // Build edge info
+    MeshCutByMark::EdgeInfoManager edgeInfo;
+    edgeInfo.buildEdgeInfo(&mesh);
+
+    // Test flood-fill from face 0
+    MeshCutByMark::RegionMarker regionMarker;
+    auto result = regionMarker.floodFill(0, 1, &mesh, edgeInfo);
+
+    // Should find both triangles (they share an edge and have same mark)
+    assert(result.size() == 2);
+
+    // Verify both faces are in the result
+    bool hasFace0 = std::find(result.begin(), result.end(), 0) != result.end();
+    bool hasFace1 = std::find(result.begin(), result.end(), 1) != result.end();
+    assert(hasFace0);
+    assert(hasFace1);
+
+    std::cout << "testFloodFill passed" << std::endl;
+}
+
+void testFloodFillMarkDiff() {
+    // Create 2 triangles sharing edge (v1, v2) with different marks
+    //
+    //   v2 ---- v3
+    //   / \     |
+    //  /   \    |
+    // v0 --- v1
+    //
+    CMeshO mesh;
+
+    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 4);
+    mesh.vert[0].P() = Point3m(0, 0, 0);
+    mesh.vert[1].P() = Point3m(1, 0, 0);
+    mesh.vert[2].P() = Point3m(0, 1, 0);
+    mesh.vert[3].P() = Point3m(1, 1, 0);
+
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+
+    // Enable FF adjacency and compute topology
+    mesh.face.EnableFFAdjacency();
+    vcg::tri::UpdateTopology<CMeshO>::FaceFace(mesh);
+
+    // Enable marks and set different marks
+    mesh.face.EnableMark();
+    mesh.face[0].IMark() = 1;
+    mesh.face[1].IMark() = 2;
+
+    // Build edge info
+    MeshCutByMark::EdgeInfoManager edgeInfo;
+    edgeInfo.buildEdgeInfo(&mesh);
+
+    // Test flood-fill from face 0 with targetMark=1
+    MeshCutByMark::RegionMarker regionMarker;
+    auto result = regionMarker.floodFill(0, 1, &mesh, edgeInfo);
+
+    // Should only find face 0 (face 1 has different mark)
+    assert(result.size() == 1);
+    assert(result[0] == 0);
+
+    // Test flood-fill from face 1 with targetMark=2
+    auto result2 = regionMarker.floodFill(1, 2, &mesh, edgeInfo);
+    assert(result2.size() == 1);
+    assert(result2[0] == 1);
+
+    std::cout << "testFloodFillMarkDiff passed" << std::endl;
+}
+
+void testFloodFillBoundary() {
+    // Create a single isolated triangle
+    //
+    //   v2
+    //   / \
+    //  /   \
+    // v0 --- v1
+    //
+    CMeshO mesh;
+
+    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 3);
+    mesh.vert[0].P() = Point3m(0, 0, 0);
+    mesh.vert[1].P() = Point3m(1, 0, 0);
+    mesh.vert[2].P() = Point3m(0, 1, 0);
+
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+
+    // Enable FF adjacency and compute topology
+    mesh.face.EnableFFAdjacency();
+    vcg::tri::UpdateTopology<CMeshO>::FaceFace(mesh);
+
+    // Enable marks
+    mesh.face.EnableMark();
+    mesh.face[0].IMark() = 1;
+
+    // Build edge info
+    MeshCutByMark::EdgeInfoManager edgeInfo;
+    edgeInfo.buildEdgeInfo(&mesh);
+
+    // Test flood-fill from the only face
+    MeshCutByMark::RegionMarker regionMarker;
+    auto result = regionMarker.floodFill(0, 1, &mesh, edgeInfo);
+
+    // Should find exactly 1 face (all edges are boundaries)
+    assert(result.size() == 1);
+    assert(result[0] == 0);
+
+    std::cout << "testFloodFillBoundary passed" << std::endl;
+}
+
+void testExtractSubRegions() {
+    // Create 4 triangles forming a quad, with a "cut" between faces 0-1 and 2-3
+    //
+    //   v4 ---- v3
+    //   /|      /|
+    //  / |     / |
+    // v0 +--- v1 |
+    //  \ |     \ |
+    //   \|      \|
+    //    v5 ---- v2
+    //
+    // Actually, simpler: 4 triangles sharing a central vertex
+    // Face 0: v0, v1, v4 (center)
+    // Face 1: v1, v2, v4
+    // Face 2: v2, v3, v4
+    // Face 3: v3, v0, v4
+    //
+    // All have the same mark. If we "cut" between face 0 and face 3
+    // (by treating edge v0-v4 as a cut edge), we get two sub-regions:
+    // {0, 1, 2} and {3}
+
+    CMeshO mesh;
+
+    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 5);
+    mesh.vert[0].P() = Point3m(0, 0, 0);
+    mesh.vert[1].P() = Point3m(1, 0, 0);
+    mesh.vert[2].P() = Point3m(1, 1, 0);
+    mesh.vert[3].P() = Point3m(0, 1, 0);
+    mesh.vert[4].P() = Point3m(0.5, 0.5, 0);  // center
+
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[4]);
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[2], &mesh.vert[4]);
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[2], &mesh.vert[3], &mesh.vert[4]);
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[3], &mesh.vert[0], &mesh.vert[4]);
+
+    // Enable FF adjacency and compute topology
+    mesh.face.EnableFFAdjacency();
+    vcg::tri::UpdateTopology<CMeshO>::FaceFace(mesh);
+
+    // Enable marks (all same mark)
+    mesh.face.EnableMark();
+    mesh.face[0].IMark() = 1;
+    mesh.face[1].IMark() = 1;
+    mesh.face[2].IMark() = 1;
+    mesh.face[3].IMark() = 1;
+
+    MeshCutByMark::RegionMarker regionMarker;
+    regionMarker.initNewMark(&mesh);
+
+    // All 4 faces are in curFaces
+    std::vector<int> curFaces = {0, 1, 2, 3};
+
+    // Without any cuts, all faces should be in one region
+    auto subRegions = regionMarker.extractSubRegions(curFaces, &mesh);
+    assert(subRegions.size() == 1);
+    assert(subRegions[0].size() == 4);
+
+    std::cout << "testExtractSubRegions passed" << std::endl;
+}
+
+void testMarkSubRegions() {
+    // Test marking sub-regions with incrementing counters
+    CMeshO mesh;
+
+    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 3);
+    mesh.vert[0].P() = Point3m(0, 0, 0);
+    mesh.vert[1].P() = Point3m(1, 0, 0);
+    mesh.vert[2].P() = Point3m(0, 1, 0);
+
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+
+    MeshCutByMark::RegionMarker regionMarker;
+    regionMarker.initNewMark(&mesh);
+
+    // Create two sub-regions: {face 0} and empty (to test counter increment)
+    std::vector<std::vector<int>> subRegions = {{0}, {}};
+    int newMarkCounter = 5;
+
+    regionMarker.markSubRegions(subRegions, &mesh, newMarkCounter);
+
+    // Face 0 should have newMark = 5 (first region)
+    assert(regionMarker.getNewMark(0) == 5);
+
+    // Counter should be incremented by 2 (one per region)
+    assert(newMarkCounter == 7);
+
+    std::cout << "testMarkSubRegions passed" << std::endl;
+}
+
+void testInitNewMark() {
+    // Test that initNewMark zeros all face marks
+    CMeshO mesh;
+
+    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 3);
+    mesh.vert[0].P() = Point3m(0, 0, 0);
+    mesh.vert[1].P() = Point3m(1, 0, 0);
+    mesh.vert[2].P() = Point3m(0, 1, 0);
+
+    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+
+    MeshCutByMark::RegionMarker regionMarker;
+    regionMarker.initNewMark(&mesh);
+
+    // All newMarks should be 0
+    assert(regionMarker.getNewMark(0) == 0);
+
+    // Set a value and re-init
+    regionMarker.setNewMark(0, 42);
+    assert(regionMarker.getNewMark(0) == 42);
+
+    regionMarker.initNewMark(&mesh);
+    assert(regionMarker.getNewMark(0) == 0);
+
+    std::cout << "testInitNewMark passed" << std::endl;
+}
+
 int main() {
     testEdgeHash();
     testBuildEdgeInfo();
@@ -463,5 +717,11 @@ int main() {
     testMakeCutPlaneLongPolyline();
     testIsOnMarkDiffEdge();
     testSignedDistanceAndIntersection();
+    testFloodFill();
+    testFloodFillMarkDiff();
+    testFloodFillBoundary();
+    testExtractSubRegions();
+    testMarkSubRegions();
+    testInitNewMark();
     return 0;
 }
