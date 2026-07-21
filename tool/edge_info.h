@@ -5,6 +5,7 @@
 #include <vector>
 #include <unordered_map>
 #include <utility>
+#include <algorithm>
 
 // Forward declaration - CMeshO is defined in cmesh.h with vcglib dependency
 class CMeshO;
@@ -36,6 +37,15 @@ struct EdgeHash {
     }
 };
 
+// 边的相等比较函数（归一化后比较，确保 {a,b} == {b,a}）
+struct EdgeEqual {
+    bool operator()(const std::pair<int,int>& a, const std::pair<int,int>& b) const {
+        auto na = std::minmax(a.first, a.second);
+        auto nb = std::minmax(b.first, b.second);
+        return na == nb;
+    }
+};
+
 // 边信息管理器
 class EdgeInfoManager {
 public:
@@ -53,8 +63,8 @@ public:
 
 private:
     CMeshO* m_mesh;
-    std::unordered_map<std::pair<int,int>, std::vector<int>, EdgeHash> m_edgeToFaces;
-    std::unordered_map<std::pair<int,int>, CutEdgeType, EdgeHash> m_edgeTypes;
+    std::unordered_map<std::pair<int,int>, std::vector<int>, EdgeHash, EdgeEqual> m_edgeToFaces;
+    std::unordered_map<std::pair<int,int>, CutEdgeType, EdgeHash, EdgeEqual> m_edgeTypes;
 };
 
 } // namespace MeshCutByMark
