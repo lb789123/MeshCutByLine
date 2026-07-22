@@ -6,7 +6,7 @@
 #include "tool/polyline.h"
 #include "tool/cut_plane.h"
 #include "tool/region_marker.h"
-#include "JasMeshMarkAndSplit.h"
+#include "JasMeshMarkAndCutSplit.h"
 
 void testEdgeHash() {
     MeshCutByMark::EdgeHash hash;
@@ -146,7 +146,7 @@ void testFindCutEdges() {
     assert(edgeInfo.getEdgeType(2, 3) == MeshCutByMark::CUT_EDGE_BOUNDARY);
 
     // Now test findCutEdges
-    JasMeshMarkAndSplit splitter;
+    JasMeshMarkAndCutSplit splitter;
     splitter.SetMainMesh(&mesh);
     splitter.BuildEdgeInfo();
 
@@ -723,7 +723,7 @@ void testExtractBoundaryEdges() {
 
     vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
 
-    JasMeshMarkAndSplit splitter;
+    JasMeshMarkAndCutSplit splitter;
     splitter.SetMainMesh(&mesh);
 
     std::vector<int> regionFaces = {0};
@@ -763,7 +763,7 @@ void testExtractBoundaryEdgesTwoTriangles() {
     vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
     vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
 
-    JasMeshMarkAndSplit splitter;
+    JasMeshMarkAndCutSplit splitter;
     splitter.SetMainMesh(&mesh);
 
     // Both faces form one region
@@ -812,10 +812,10 @@ void testSplitMeshByMarkAndEdge() {
     mesh.face[1].IMark() = 2;
 
     // Run the main algorithm
-    JasMeshMarkAndSplit splitter;
+    JasMeshMarkAndCutSplit splitter;
     splitter.SetMainMesh(&mesh);
 
-    std::vector<JasMeshMarkAndSplit::splitReg> regions;
+    std::vector<JasMeshMarkAndCutSplit::splitReg> regions;
     splitter.SplitMeshByMarkAndEdge(regions);
 
     // Should produce 2 regions (one per mark)
@@ -869,10 +869,10 @@ void testSplitMeshByMarkAndEdgeSameMark() {
     mesh.face[0].IMark() = 1;
     mesh.face[1].IMark() = 1;
 
-    JasMeshMarkAndSplit splitter;
+    JasMeshMarkAndCutSplit splitter;
     splitter.SetMainMesh(&mesh);
 
-    std::vector<JasMeshMarkAndSplit::splitReg> regions;
+    std::vector<JasMeshMarkAndCutSplit::splitReg> regions;
     splitter.SplitMeshByMarkAndEdge(regions);
 
     // Should produce 1 region (both faces have same mark, connected)
@@ -925,10 +925,10 @@ void testIntegration() {
     mesh.face[3].IMark() = 2;
 
     // Run the main algorithm
-    JasMeshMarkAndSplit splitter;
+    JasMeshMarkAndCutSplit splitter;
     splitter.SetMainMesh(&mesh);
 
-    std::vector<JasMeshMarkAndSplit::splitReg> regions;
+    std::vector<JasMeshMarkAndCutSplit::splitReg> regions;
     splitter.SplitMeshByMarkAndEdge(regions);
 
     // Verify: should produce 2 regions (one per mark value)

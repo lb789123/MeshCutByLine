@@ -11,8 +11,8 @@
  * 输入：带有 mark 属性的三角形网格
  * 输出：简单多边形区域列表
  */
-#ifndef JASMESHMARKANDSPLIT_H
-#define JASMESHMARKANDSPLIT_H
+#ifndef JASMESHMARKANDCUTSPLIT_H
+#define JASMESHMARKANDCUTSPLIT_H
 
 #include <tool/cmesh.h>
 #include <vector>
@@ -22,7 +22,7 @@
 #include "tool/polyline.h"
 #include "tool/cut_plane.h"
 #include "tool/region_marker.h"
-class JasMeshMarkAndSplit
+class JasMeshMarkAndCutSplit
 {
 public:
 
@@ -35,8 +35,8 @@ public:
 		std::vector<int> boundlines; // 边界边的顶点索引序列
 	};
 
-	JasMeshMarkAndSplit();
-	~JasMeshMarkAndSplit();
+	JasMeshMarkAndCutSplit();
+	~JasMeshMarkAndCutSplit();
 
 	//设置mesh 并且已经根据mark标记了三角形归属的每个平面
 	void SetMainMesh(CMeshOD* pMesh) { m_pMesh = pMesh; }
@@ -80,4 +80,4 @@ private:
 	int m_debugIterCounter = 0;                        // 主循环迭代计数器
 };
 
-#endif // JASMESHMARKANDSPLIT_H
+#endif // JASMESHMARKANDCUTSPLIT_H

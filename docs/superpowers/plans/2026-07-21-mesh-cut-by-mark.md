@@ -22,8 +22,8 @@
 - `tests/test_mesh_cut.cpp` - 单元测试
 
 **修改文件:**
-- `JasMeshMarkAndSplit.h` - 添加新数据结构和方法声明
-- `JasMeshMarkAndSplit.cpp` - 实现核心算法
+- `JasMeshMarkAndCutSplit.h` - 添加新数据结构和方法声明
+- `JasMeshMarkAndCutSplit.cpp` - 实现核心算法
 
 ---
 
@@ -142,7 +142,7 @@ git commit -m "feat: add edge info data structure"
 
 **Files:**
 - Modify: `tool/edge_info.h`
-- Modify: `JasMeshMarkAndSplit.h`
+- Modify: `JasMeshMarkAndCutSplit.h`
 - Test: `tests/test_mesh_cut.cpp`
 
 - [ ] **Step 1: 实现 EdgeInfoManager::buildEdgeInfo**
@@ -191,13 +191,13 @@ void EdgeInfoManager::buildEdgeInfo(CMeshOD* mesh) {
 }
 ```
 
-- [ ] **Step 2: 在 JasMeshMarkAndSplit 中添加边信息管理器**
+- [ ] **Step 2: 在 JasMeshMarkAndCutSplit 中添加边信息管理器**
 
 ```cpp
-// JasMeshMarkAndSplit.h
+// JasMeshMarkAndCutSplit.h
 #include "tool/edge_info.h"
 
-class JasMeshMarkAndSplit
+class JasMeshMarkAndCutSplit
 {
 public:
     // ... 现有代码 ...
@@ -255,7 +255,7 @@ Expected: `✓ testBuildEdgeInfo passed`
 - [ ] **Step 5: 提交代码**
 
 ```bash
-git add tool/edge_info.h JasMeshMarkAndSplit.h tests/test_mesh_cut.cpp
+git add tool/edge_info.h JasMeshMarkAndCutSplit.h tests/test_mesh_cut.cpp
 git commit -m "feat: implement edge info building"
 ```
 
@@ -264,14 +264,14 @@ git commit -m "feat: implement edge info building"
 ## Task 3: 实现切割边查找
 
 **Files:**
-- Modify: `JasMeshMarkAndSplit.cpp`
+- Modify: `JasMeshMarkAndCutSplit.cpp`
 - Test: `tests/test_mesh_cut.cpp`
 
 - [ ] **Step 1: 实现 findCutEdges 方法**
 
 ```cpp
-// JasMeshMarkAndSplit.cpp
-std::vector<MeshCutByMark::CutEdge> JasMeshMarkAndSplit::findCutEdges(const std::vector<int>& curFaces) {
+// JasMeshMarkAndCutSplit.cpp
+std::vector<MeshCutByMark::CutEdge> JasMeshMarkAndCutSplit::findCutEdges(const std::vector<int>& curFaces) {
     std::vector<MeshCutByMark::CutEdge> cutEdges;
     
     for (int faceIdx : curFaces) {
@@ -328,7 +328,7 @@ void testFindCutEdges() {
     edgeInfo.buildEdgeInfo(&mesh);
     
     // 查找切割边
-    JasMeshMarkAndSplit splitter;
+    JasMeshMarkAndCutSplit splitter;
     splitter.SetMainMesh(&mesh);
     
     std::vector<int> curFaces = {0, 1, 2};
@@ -352,7 +352,7 @@ void testFindCutEdges() {
 
 ```bash
 cd d:\claudecode\MeshCutByLine
-g++ -std=c++17 -I. -Ivcglib tests/test_mesh_cut.cpp JasMeshMarkAndSplit.cpp -o tests/test_mesh_cut
+g++ -std=c++17 -I. -Ivcglib tests/test_mesh_cut.cpp JasMeshMarkAndCutSplit.cpp -o tests/test_mesh_cut
 ./tests/test_mesh_cut
 ```
 
@@ -361,7 +361,7 @@ Expected: `✓ testFindCutEdges passed`
 - [ ] **Step 4: 提交代码**
 
 ```bash
-git add JasMeshMarkAndSplit.cpp tests/test_mesh_cut.cpp
+git add JasMeshMarkAndCutSplit.cpp tests/test_mesh_cut.cpp
 git commit -m "feat: implement findCutEdges"
 ```
 
@@ -371,7 +371,7 @@ git commit -m "feat: implement findCutEdges"
 
 **Files:**
 - Create: `tool/polyline.h`
-- Modify: `JasMeshMarkAndSplit.h`
+- Modify: `JasMeshMarkAndCutSplit.h`
 - Test: `tests/test_mesh_cut.cpp`
 
 - [ ] **Step 1: 创建折线数据结构**
@@ -552,7 +552,7 @@ void testConnectEdgesToPolylines() {
 
 ```bash
 cd d:\claudecode\MeshCutByLine
-g++ -std=c++17 -I. -Ivcglib tests/test_mesh_cut.cpp JasMeshMarkAndSplit.cpp -o tests/test_mesh_cut
+g++ -std=c++17 -I. -Ivcglib tests/test_mesh_cut.cpp JasMeshMarkAndCutSplit.cpp -o tests/test_mesh_cut
 ./tests/test_mesh_cut
 ```
 
@@ -723,7 +723,7 @@ void testMakeCutPlane() {
 
 ```bash
 cd d:\claudecode\MeshCutByLine
-g++ -std=c++17 -I. -Ivcglib tests/test_mesh_cut.cpp JasMeshMarkAndSplit.cpp -o tests/test_mesh_cut
+g++ -std=c++17 -I. -Ivcglib tests/test_mesh_cut.cpp JasMeshMarkAndCutSplit.cpp -o tests/test_mesh_cut
 ./tests/test_mesh_cut
 ```
 
@@ -742,7 +742,7 @@ git commit -m "feat: implement cut plane construction"
 
 **Files:**
 - Create: `tool/region_marker.h`
-- Modify: `JasMeshMarkAndSplit.h`
+- Modify: `JasMeshMarkAndCutSplit.h`
 - Test: `tests/test_mesh_cut.cpp`
 
 - [ ] **Step 1: 创建区域标记头文件**
@@ -959,7 +959,7 @@ void testFloodFill() {
 
 ```bash
 cd d:\claudecode\MeshCutByLine
-g++ -std=c++17 -I. -Ivcglib tests/test_mesh_cut.cpp JasMeshMarkAndSplit.cpp -o tests/test_mesh_cut
+g++ -std=c++17 -I. -Ivcglib tests/test_mesh_cut.cpp JasMeshMarkAndCutSplit.cpp -o tests/test_mesh_cut
 ./tests/test_mesh_cut
 ```
 
@@ -977,14 +977,14 @@ git commit -m "feat: implement region marking"
 ## Task 7: 实现边界边提取
 
 **Files:**
-- Modify: `JasMeshMarkAndSplit.cpp`
+- Modify: `JasMeshMarkAndCutSplit.cpp`
 - Test: `tests/test_mesh_cut.cpp`
 
 - [ ] **Step 1: 实现 extractBoundaryEdges 方法**
 
 ```cpp
-// JasMeshMarkAndSplit.cpp
-std::vector<std::vector<int>> JasMeshMarkAndSplit::extractBoundaryEdges(
+// JasMeshMarkAndCutSplit.cpp
+std::vector<std::vector<int>> JasMeshMarkAndCutSplit::extractBoundaryEdges(
     const std::vector<int>& regionFaces
 ) {
     std::vector<std::vector<int>> boundaries;
@@ -1071,7 +1071,7 @@ void testExtractBoundaryEdges() {
     
     auto f0 = vcg::tri::Allocator<CMeshOD>::AddFace(mesh, v0, v1, v2);
     
-    JasMeshMarkAndSplit splitter;
+    JasMeshMarkAndCutSplit splitter;
     splitter.SetMainMesh(&mesh);
     
     std::vector<int> regionFaces = {0};
@@ -1089,7 +1089,7 @@ void testExtractBoundaryEdges() {
 
 ```bash
 cd d:\claudecode\MeshCutByLine
-g++ -std=c++17 -I. -Ivcglib tests/test_mesh_cut.cpp JasMeshMarkAndSplit.cpp -o tests/test_mesh_cut
+g++ -std=c++17 -I. -Ivcglib tests/test_mesh_cut.cpp JasMeshMarkAndCutSplit.cpp -o tests/test_mesh_cut
 ./tests/test_mesh_cut
 ```
 
@@ -1098,7 +1098,7 @@ Expected: `✓ testExtractBoundaryEdges passed`
 - [ ] **Step 4: 提交代码**
 
 ```bash
-git add JasMeshMarkAndSplit.cpp tests/test_mesh_cut.cpp
+git add JasMeshMarkAndCutSplit.cpp tests/test_mesh_cut.cpp
 git commit -m "feat: implement boundary edge extraction"
 ```
 
@@ -1107,14 +1107,14 @@ git commit -m "feat: implement boundary edge extraction"
 ## Task 8: 实现主算法 SplitMeshByMarkAndEdge
 
 **Files:**
-- Modify: `JasMeshMarkAndSplit.cpp`
+- Modify: `JasMeshMarkAndCutSplit.cpp`
 - Test: `tests/test_mesh_cut.cpp`
 
 - [ ] **Step 1: 实现主算法**
 
 ```cpp
-// JasMeshMarkAndSplit.cpp
-void JasMeshMarkAndSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRegs) {
+// JasMeshMarkAndCutSplit.cpp
+void JasMeshMarkAndCutSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRegs) {
     // 初始化新标记
     m_newMarkCounter = 1;
     m_regionMarker.initNewMark(m_pMesh);
@@ -1220,10 +1220,10 @@ void testSplitMeshByMarkAndEdge() {
     mesh.face[1].mark = 2;
     
     // 测试分割
-    JasMeshMarkAndSplit splitter;
+    JasMeshMarkAndCutSplit splitter;
     splitter.SetMainMesh(&mesh);
     
-    std::vector<JasMeshMarkAndSplit::splitReg> regions;
+    std::vector<JasMeshMarkAndCutSplit::splitReg> regions;
     splitter.SplitMeshByMarkAndEdge(regions);
     
     // 验证输出
@@ -1237,7 +1237,7 @@ void testSplitMeshByMarkAndEdge() {
 
 ```bash
 cd d:\claudecode\MeshCutByLine
-g++ -std=c++17 -I. -Ivcglib tests/test_mesh_cut.cpp JasMeshMarkAndSplit.cpp -o tests/test_mesh_cut
+g++ -std=c++17 -I. -Ivcglib tests/test_mesh_cut.cpp JasMeshMarkAndCutSplit.cpp -o tests/test_mesh_cut
 ./tests/test_mesh_cut
 ```
 
@@ -1246,7 +1246,7 @@ Expected: `✓ testSplitMeshByMarkAndEdge passed`
 - [ ] **Step 4: 提交代码**
 
 ```bash
-git add JasMeshMarkAndSplit.cpp tests/test_mesh_cut.cpp
+git add JasMeshMarkAndCutSplit.cpp tests/test_mesh_cut.cpp
 git commit -m "feat: implement SplitMeshByMarkAndEdge main algorithm"
 ```
 
@@ -1286,10 +1286,10 @@ void testIntegration() {
     mesh.face[3].mark = 2;
     
     // 测试分割
-    JasMeshMarkAndSplit splitter;
+    JasMeshMarkAndCutSplit splitter;
     splitter.SetMainMesh(&mesh);
     
-    std::vector<JasMeshMarkAndSplit::splitReg> regions;
+    std::vector<JasMeshMarkAndCutSplit::splitReg> regions;
     splitter.SplitMeshByMarkAndEdge(regions);
     
     // 验证输出
@@ -1310,7 +1310,7 @@ void testIntegration() {
 
 ```bash
 cd d:\claudecode\MeshCutByLine
-g++ -std=c++17 -I. -Ivcglib tests/test_mesh_cut.cpp JasMeshMarkAndSplit.cpp -o tests/test_mesh_cut
+g++ -std=c++17 -I. -Ivcglib tests/test_mesh_cut.cpp JasMeshMarkAndCutSplit.cpp -o tests/test_mesh_cut
 ./tests/test_mesh_cut
 ```
 
@@ -1333,7 +1333,7 @@ git commit -m "test: add integration test"
 - [ ] **Step 1: 更新头文件注释**
 
 ```cpp
-// JasMeshMarkAndSplit.h
+// JasMeshMarkAndCutSplit.h
 /**
  * @brief MeshCutByMark - 将网格按 mark 分割成简单多边形
  * 

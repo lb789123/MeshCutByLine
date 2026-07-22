@@ -50,8 +50,8 @@ MeshCutByLine/
 │   ├── cut_plane.h          # 切割平面构造
 │   ├── region_marker.h      # 区域标记
 │   └── cmesh.h              # VCGlib 网格类型定义
-├── JasMeshMarkAndSplit.h    # 主头文件
-├── JasMeshMarkAndSplit.cpp  # 主实现
+├── JasMeshMarkAndCutSplit.h    # 主头文件
+├── JasMeshMarkAndCutSplit.cpp  # 主实现
 ├── tests/
 │   └── test_mesh_cut.cpp    # 测试文件
 ├── vcglib/                  # VCGlib 依赖库
@@ -234,7 +234,7 @@ All 21 tests passed!
 ## 使用示例
 
 ```cpp
-#include "JasMeshMarkAndSplit.h"
+#include "JasMeshMarkAndCutSplit.h"
 
 // 创建网格
 CMeshOD mesh;
@@ -246,11 +246,11 @@ mesh.face[1].IMark() = 1;
 mesh.face[2].IMark() = 2;
 
 // 创建分割器
-JasMeshMarkAndSplit splitter;
+JasMeshMarkAndCutSplit splitter;
 splitter.SetMainMesh(&mesh);
 
 // 执行分割
-std::vector<JasMeshMarkAndSplit::splitReg> regions;
+std::vector<JasMeshMarkAndCutSplit::splitReg> regions;
 splitter.SplitMeshByMarkAndEdge(regions);
 
 // 使用结果
@@ -271,7 +271,7 @@ for (const auto& region : regions) {
 ### 开启调试
 
 ```cpp
-JasMeshMarkAndSplit splitter;
+JasMeshMarkAndCutSplit splitter;
 splitter.SetMainMesh(&mesh);
 splitter.SetDebug(true);                          // 开启调试输出
 splitter.SetDebugOutputDir("my_debug_dir/");      // 可选：自定义输出目录（默认 debug_output/）

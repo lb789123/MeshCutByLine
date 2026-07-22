@@ -126,10 +126,10 @@ struct SplitRegion {
 };
 ```
 
-### 3.4 JasMeshMarkAndSplit 类
+### 3.4 JasMeshMarkAndCutSplit 类
 
 ```cpp
-class JasMeshMarkAndSplit
+class JasMeshMarkAndCutSplit
 {
 public:
     struct splitReg
@@ -142,8 +142,8 @@ public:
         std::vector<int> boundlines;          // 边界边的顶点索引序列（与原始 mesh 边方向一致）
     };
 
-    JasMeshMarkAndSplit();
-    ~JasMeshMarkAndSplit();
+    JasMeshMarkAndCutSplit();
+    ~JasMeshMarkAndCutSplit();
 
     void SetMainMesh(CMeshOD* pMesh) { m_pMesh = pMesh; }
 
@@ -774,10 +774,10 @@ struct SplitRegion {
 CMeshOD mesh;
 // ... 加载 mesh ...
 
-JasMeshMarkAndSplit splitter;
+JasMeshMarkAndCutSplit splitter;
 splitter.SetMainMesh(&mesh);
 
-std::vector<JasMeshMarkAndSplit::splitReg> regions;
+std::vector<JasMeshMarkAndCutSplit::splitReg> regions;
 splitter.SplitMeshByMarkAndEdge(regions);
 
 // 使用结果
@@ -836,7 +836,7 @@ for (int i = 0; i < mesh.face.size(); i++) {
 ### 9.2 接口设计
 
 ```cpp
-class JasMeshMarkAndSplit {
+class JasMeshMarkAndCutSplit {
 public:
     void SetDebug(bool enable);                      // 开关调试输出
     void SetDebugOutputDir(const std::string& dir);  // 设置输出目录

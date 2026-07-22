@@ -1,4 +1,4 @@
-#include "JasMeshMarkAndSplit.h"
+#include "JasMeshMarkAndCutSplit.h"
 #include <vcg/complex/algorithms/update/topology.h>
 #include <vcg/complex/algorithms/update/normal.h>
 #include <filesystem>
@@ -8,15 +8,15 @@
 #include <cstdlib>
 #include <ctime>
 
-JasMeshMarkAndSplit::JasMeshMarkAndSplit()
+JasMeshMarkAndCutSplit::JasMeshMarkAndCutSplit()
 {
 }
 
-JasMeshMarkAndSplit::~JasMeshMarkAndSplit()
+JasMeshMarkAndCutSplit::~JasMeshMarkAndCutSplit()
 {
 }
 
-std::vector<MeshCutByMark::CutEdge> JasMeshMarkAndSplit::findCutEdges(const std::vector<int>& curFaces) {
+std::vector<MeshCutByMark::CutEdge> JasMeshMarkAndCutSplit::findCutEdges(const std::vector<int>& curFaces) {
     std::vector<MeshCutByMark::CutEdge> cutEdges;
 
     for (int faceIdx : curFaces) {
@@ -43,7 +43,7 @@ std::vector<MeshCutByMark::CutEdge> JasMeshMarkAndSplit::findCutEdges(const std:
     return cutEdges;
 }
 
-std::vector<std::vector<int>> JasMeshMarkAndSplit::extractBoundaryEdges(
+std::vector<std::vector<int>> JasMeshMarkAndCutSplit::extractBoundaryEdges(
     const std::vector<int>& regionFaces
 ) {
     std::vector<std::vector<int>> boundaries;
@@ -117,11 +117,11 @@ std::vector<std::vector<int>> JasMeshMarkAndSplit::extractBoundaryEdges(
 
 // ============ 调试输出辅助方法 ============
 
-void JasMeshMarkAndSplit::debugEnsureDir() {
+void JasMeshMarkAndCutSplit::debugEnsureDir() {
 	std::filesystem::create_directories(m_debugOutputDir);
 }
 
-void JasMeshMarkAndSplit::debugWritePolylines(
+void JasMeshMarkAndCutSplit::debugWritePolylines(
 	int iterIdx,
 	const std::vector<MeshCutByMark::Polyline>& polylines)
 {
@@ -163,7 +163,7 @@ void JasMeshMarkAndSplit::debugWritePolylines(
 	ofs.close();
 }
 
-void JasMeshMarkAndSplit::debugWriteFacesOFF(
+void JasMeshMarkAndCutSplit::debugWriteFacesOFF(
 	int iterIdx,
 	const char* suffix,
 	const std::vector<int>& faceIndices)
@@ -214,7 +214,7 @@ void JasMeshMarkAndSplit::debugWriteFacesOFF(
 	ofs.close();
 }
 
-void JasMeshMarkAndSplit::debugWriteSubRegionsOFF(
+void JasMeshMarkAndCutSplit::debugWriteSubRegionsOFF(
 	int iterIdx,
 	const std::vector<std::vector<int>>& subRegions)
 {
@@ -225,7 +225,7 @@ void JasMeshMarkAndSplit::debugWriteSubRegionsOFF(
 	}
 }
 
-void JasMeshMarkAndSplit::debugWritePolygonsOBJ(
+void JasMeshMarkAndCutSplit::debugWritePolygonsOBJ(
 	const std::map<int, std::vector<int>>& markToFaces)
 {
 	if (!m_debug) return;
@@ -277,7 +277,7 @@ void JasMeshMarkAndSplit::debugWritePolygonsOBJ(
 	ofs.close();
 }
 
-void JasMeshMarkAndSplit::debugSaveColoredMesh(const std::vector<splitReg>& regs)
+void JasMeshMarkAndCutSplit::debugSaveColoredMesh(const std::vector<splitReg>& regs)
 {
 	if (!m_debug || regs.empty() || !m_pMesh) return;
 	debugEnsureDir();
@@ -355,7 +355,7 @@ void JasMeshMarkAndSplit::debugSaveColoredMesh(const std::vector<splitReg>& regs
 	ofs.close();
 }
 
-void JasMeshMarkAndSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRegs)
+void JasMeshMarkAndCutSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRegs)
 {
 	// Phase 1: 初始化
 	m_newMarkCounter = 1;

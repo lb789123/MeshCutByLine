@@ -19,6 +19,6 @@ include_directories(${CMAKE_SOURCE_DIR})
 # test executable
 add_executable(test_mesh_cut
     tests/test_mesh_cut.cpp
-    JasMeshMarkAndSplit.cpp
+    JasMeshMarkAndCutSplit.cpp
     tool/cmesh.cpp
 )
