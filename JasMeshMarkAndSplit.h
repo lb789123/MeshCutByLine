@@ -16,6 +16,8 @@
 
 #include <tool/cmesh.h>
 #include <vector>
+#include <string>
+#include <map>
 #include "tool/edge_info.h"
 #include "tool/polyline.h"
 #include "tool/cut_plane.h"
@@ -42,6 +44,12 @@ public:
 	//构建边信息（在SetMainMesh之后调用）
 	void BuildEdgeInfo() { m_edgeInfoManager.buildEdgeInfo(m_pMesh); }
 
+	//设置调试输出开关
+	void SetDebug(bool enable) { m_debug = enable; }
+
+	//设置调试输出目录
+	void SetDebugOutputDir(const std::string& dir) { m_debugOutputDir = dir; }
+
 	//返回分割后的多个三维多边形
 	void SplitMeshByMarkAndEdge(std::vector<splitReg> &retRegs);
 
@@ -51,6 +59,13 @@ public:
 	//提取区域的边界边序列
 	std::vector<std::vector<int>> extractBoundaryEdges(const std::vector<int>& regionFaces);
 private:
+	// 调试输出辅助方法
+	void debugEnsureDir();
+	void debugWritePolylines(int iterIdx, const std::vector<MeshCutByMark::Polyline>& polylines);
+	void debugWriteFacesOFF(int iterIdx, const char* suffix, const std::vector<int>& faceIndices);
+	void debugWriteSubRegionsOFF(int iterIdx, const std::vector<std::vector<int>>& subRegions);
+	void debugWritePolygonsOBJ(const std::map<int, std::vector<int>>& markToFaces);
+
 	CMeshOD* m_pMesh = nullptr;
 	MeshCutByMark::EdgeInfoManager m_edgeInfoManager; // 边信息管理器
 	MeshCutByMark::PolylineManager m_polylineManager; // 折线管理器
@@ -58,6 +73,10 @@ private:
 	MeshCutByMark::RegionMarker m_regionMarker;       // 区域标记管理器
 	int m_newMarkCounter = 0;                          // 新区域标记计数器
 	std::vector<vcg::Point3i> m_edgeMarks;//对应是否是分割边
+
+	bool m_debug = false;                              // 调试输出开关
+	std::string m_debugOutputDir = "debug_output/";   // 调试输出目录
+	int m_debugIterCounter = 0;                        // 主循环迭代计数器
 };
 
 #endif // JASMESHMARKANDSPLIT_H

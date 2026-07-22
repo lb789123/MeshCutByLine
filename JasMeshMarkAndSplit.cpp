@@ -1,6 +1,9 @@
 #include "JasMeshMarkAndSplit.h"
 #include <vcg/complex/algorithms/update/topology.h>
 #include <vcg/complex/algorithms/update/normal.h>
+#include <filesystem>
+#include <fstream>
+#include <set>
 #include <map>
 
 JasMeshMarkAndSplit::JasMeshMarkAndSplit()
@@ -110,10 +113,173 @@ std::vector<std::vector<int>> JasMeshMarkAndSplit::extractBoundaryEdges(
     return boundaries;
 }
 
+// ============ 调试输出辅助方法 ============
+
+void JasMeshMarkAndSplit::debugEnsureDir() {
+	std::filesystem::create_directories(m_debugOutputDir);
+}
+
+void JasMeshMarkAndSplit::debugWritePolylines(
+	int iterIdx,
+	const std::vector<MeshCutByMark::Polyline>& polylines)
+{
+	if (!m_debug || polylines.empty()) return;
+	debugEnsureDir();
+
+	std::string path = m_debugOutputDir + "iter_" + std::to_string(iterIdx) + "_polylines.obj";
+	std::ofstream ofs(path);
+	if (!ofs.is_open()) return;
+
+	// 收集折线涉及的所有顶点（去重，保持顺序）
+	std::vector<int> vertMap;
+	std::unordered_map<int, int> globalToLocal;
+	for (const auto& pl : polylines) {
+		for (int vi : pl.vertexIndices) {
+			if (globalToLocal.find(vi) == globalToLocal.end()) {
+				int localIdx = static_cast<int>(vertMap.size());
+				globalToLocal[vi] = localIdx;
+				vertMap.push_back(vi);
+			}
+		}
+	}
+
+	// 写入顶点
+	for (int vi : vertMap) {
+		const auto& p = m_pMesh->vert[vi].P();
+		ofs << "v " << p.X() << " " << p.Y() << " " << p.Z() << "\n";
+	}
+
+	// 写入每条折线（OBJ 索引从 1 开始）
+	for (const auto& pl : polylines) {
+		ofs << "l";
+		for (int vi : pl.vertexIndices) {
+			ofs << " " << (globalToLocal[vi] + 1);
+		}
+		ofs << "\n";
+	}
+
+	ofs.close();
+}
+
+void JasMeshMarkAndSplit::debugWriteFacesOFF(
+	int iterIdx,
+	const char* suffix,
+	const std::vector<int>& faceIndices)
+{
+	if (!m_debug || faceIndices.empty()) return;
+	debugEnsureDir();
+
+	std::string path = m_debugOutputDir + "iter_" + std::to_string(iterIdx) + "_" + suffix + ".off";
+	std::ofstream ofs(path);
+	if (!ofs.is_open()) return;
+
+	// 收集涉及的顶点并建立全局->局部映射
+	std::vector<int> vertMap;
+	std::unordered_map<int, int> globalToLocal;
+	for (int fi : faceIndices) {
+		for (int j = 0; j < 3; j++) {
+			int vi = m_pMesh->face[fi].V(j)->Index();
+			if (globalToLocal.find(vi) == globalToLocal.end()) {
+				int localIdx = static_cast<int>(vertMap.size());
+				globalToLocal[vi] = localIdx;
+				vertMap.push_back(vi);
+			}
+		}
+	}
+
+	int nV = static_cast<int>(vertMap.size());
+	int nF = static_cast<int>(faceIndices.size());
+
+	ofs << "OFF\n";
+	ofs << nV << " " << nF << " 0\n";
+
+	// 写入顶点
+	for (int vi : vertMap) {
+		const auto& p = m_pMesh->vert[vi].P();
+		ofs << p.X() << " " << p.Y() << " " << p.Z() << "\n";
+	}
+
+	// 写入三角面（局部索引）
+	for (int fi : faceIndices) {
+		ofs << "3";
+		for (int j = 0; j < 3; j++) {
+			int vi = m_pMesh->face[fi].V(j)->Index();
+			ofs << " " << globalToLocal[vi];
+		}
+		ofs << "\n";
+	}
+
+	ofs.close();
+}
+
+void JasMeshMarkAndSplit::debugWriteSubRegionsOFF(
+	int iterIdx,
+	const std::vector<std::vector<int>>& subRegions)
+{
+	if (!m_debug) return;
+	for (int j = 0; j < (int)subRegions.size(); j++) {
+		std::string suffix = "sub_region_" + std::to_string(j);
+		debugWriteFacesOFF(iterIdx, suffix.c_str(), subRegions[j]);
+	}
+}
+
+void JasMeshMarkAndSplit::debugWritePolygonsOBJ(
+	const std::map<int, std::vector<int>>& markToFaces)
+{
+	if (!m_debug) return;
+	debugEnsureDir();
+
+	std::string path = m_debugOutputDir + "final_polygons.obj";
+	std::ofstream ofs(path);
+	if (!ofs.is_open()) return;
+
+	int globalVertOffset = 0;
+	for (const auto& [newMark, faces] : markToFaces) {
+		// 提取边界
+		std::vector<std::vector<int>> boundaries = extractBoundaryEdges(faces);
+		if (boundaries.empty()) continue;
+
+		// 收集本区域涉及的顶点
+		std::vector<int> vertMap;
+		std::unordered_map<int, int> globalToLocal;
+		for (const auto& boundary : boundaries) {
+			for (int vi : boundary) {
+				if (globalToLocal.find(vi) == globalToLocal.end()) {
+					int localIdx = static_cast<int>(vertMap.size());
+					globalToLocal[vi] = localIdx;
+					vertMap.push_back(vi);
+				}
+			}
+		}
+
+		ofs << "# newMark = " << newMark << "\n";
+
+		// 写入顶点
+		for (int vi : vertMap) {
+			const auto& p = m_pMesh->vert[vi].P();
+			ofs << "v " << p.X() << " " << p.Y() << " " << p.Z() << "\n";
+		}
+
+		// 写入多边形面（OBJ 索引从 1 开始，加上全局偏移）
+		for (const auto& boundary : boundaries) {
+			ofs << "f";
+			for (int vi : boundary) {
+				ofs << " " << (globalToLocal[vi] + 1 + globalVertOffset);
+			}
+			ofs << "\n";
+		}
+
+		globalVertOffset += static_cast<int>(vertMap.size());
+	}
+
+	ofs.close();
+}
+
 void JasMeshMarkAndSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRegs)
 {
 	// Phase 1: 初始化
 	m_newMarkCounter = 1;
+	m_debugIterCounter = 0;
 	m_regionMarker.initNewMark(m_pMesh);
 
 	// 构建边信息
@@ -137,12 +303,18 @@ void JasMeshMarkAndSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRegs)
 		int targetMark = m_pMesh->face[i].IMark();
 		std::vector<int> curFaces = m_regionMarker.floodFill(i, targetMark, m_pMesh, m_edgeInfoManager);
 
+		// 调试输出：flood-fill 区域
+		debugWriteFacesOFF(m_debugIterCounter, "cur_faces", curFaces);
+
 		// 2.2 找 curFaces 的切割边
 		std::vector<MeshCutByMark::CutEdge> cutEdges = findCutEdges(curFaces);
 
 		// 2.3 将切割边连接成连续折线
 		std::vector<MeshCutByMark::Polyline> polylines =
 			m_polylineManager.connectEdgesToPolylines(cutEdges, m_pMesh);
+
+		// 调试输出：折线
+		debugWritePolylines(m_debugIterCounter, polylines);
 
 		// 2.4 从端点延长切割
 		for (const auto& polyline : polylines) {
@@ -173,8 +345,13 @@ void JasMeshMarkAndSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRegs)
 		std::vector<std::vector<int>> subRegions =
 			m_regionMarker.extractSubRegions(curFaces, m_pMesh);
 
+		// 调试输出：子区域
+		debugWriteSubRegionsOFF(m_debugIterCounter, subRegions);
+
 		// 2.6 每个子区域标记新 mark
 		m_regionMarker.markSubRegions(subRegions, m_pMesh, m_newMarkCounter);
+
+		m_debugIterCounter++;
 	}
 
 	// Phase 3: 根据新标记提取多边形
@@ -184,6 +361,9 @@ void JasMeshMarkAndSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRegs)
 			markToFaces[m_regionMarker.getNewMark(i)].push_back(i);
 		}
 	}
+
+	// 调试输出：最终多边形
+	debugWritePolygonsOBJ(markToFaces);
 
 	// 输出结果
 	for (const auto& [newMark, faces] : markToFaces) {
