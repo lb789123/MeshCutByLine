@@ -6,6 +6,7 @@
 #include "tool/polyline.h"
 #include "tool/cut_plane.h"
 #include "tool/region_marker.h"
+#include "tool/local_mesh_cut.h"
 #include "JasMeshMarkAndCutSplit.h"
 
 void testEdgeHash() {
@@ -590,6 +591,39 @@ void testFloodFillBoundary() {
     std::cout << "testFloodFillBoundary passed" << std::endl;
 }
 
+void testExtractLocalMesh() {
+    // 两个三角形共享边 (v1,v2)，都 mark=1
+    //   v2 ---- v3
+    //    \     |
+    //     \    |
+    //   v0 --- v1
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
+    mesh.vert[0].P() = Point3m(0,0,0);
+    mesh.vert[1].P() = Point3m(1,0,0);
+    mesh.vert[2].P() = Point3m(0,1,0);
+    mesh.vert[3].P() = Point3m(1,1,0);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+    mesh.face.EnableFFAdjacency();
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+
+    std::vector<int> curFaces = {0, 1};
+    MeshCutByMark::LocalMeshCutManager mgr;
+    auto lm = mgr.extractLocalMesh(&mesh, curFaces);
+
+    assert(lm.mesh.vert.size() == 4);      // 4 unique verts
+    assert(lm.mesh.face.size() == 2);      // 2 faces
+    assert(lm.Nv0 == 4);                    // all original
+    assert(lm.localToGlobalVert.size() == 4);
+    assert(lm.localFaceToGlobal.size() == 2);
+    assert(lm.localFaceToGlobal[0] == 0);
+    assert(lm.localFaceToGlobal[1] == 1);
+    // 顶点坐标一致
+    assert((lm.mesh.vert[0].P() - mesh.vert[0].P()).Norm() < 1e-9);
+    std::cout << "testExtractLocalMesh passed" << std::endl;
+}
+
 void testExtractSubRegions() {
     // Create 4 triangles forming a quad, with a "cut" between faces 0-1 and 2-3
     //
@@ -984,5 +1018,6 @@ int main() {
     testSplitMeshByMarkAndEdge();
     testSplitMeshByMarkAndEdgeSameMark();
     testIntegration();
+    testExtractLocalMesh();
     return 0;
 }
