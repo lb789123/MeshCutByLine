@@ -667,6 +667,45 @@ void testMergeBack() {
     std::cout << "testMergeBack passed" << std::endl;
 }
 
+void testMergeBackSharedEdge() {
+    // face0=(v0,v1,v2), face1=(v1,v3,v2) 共享边 (v1,v2)。都 mark=5。
+    //   v2 ---- v3
+    //    \     |
+    //     \    |
+    //   v0 --- v1
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
+    mesh.vert[0].P() = Point3m(0,0,0);
+    mesh.vert[1].P() = Point3m(1,0,0);
+    mesh.vert[2].P() = Point3m(0,1,0);
+    mesh.vert[3].P() = Point3m(1,1,0);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]); // face0
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]); // face1
+    mesh.face.EnableFFAdjacency();
+    mesh.face.EnableMark();
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+    mesh.face[0].IMark() = 5;
+    mesh.face[1].IMark() = 5;
+
+    MeshCutByMark::LocalMeshCutManager mgr;
+    auto lm = mgr.extractLocalMesh(&mesh, {0, 1});
+    // 模拟 cutter 只切 face0：在 face0 的边 (v0,v1) 中点加 nv，
+    // face0 改成 (v0,nv,v2)，加 (nv,v1,v2)。注意 (nv,v1,v2) 的完整边是 (v1,v2)=共享边。
+    vcg::tri::Allocator<CMeshOD>::AddVertices(lm.mesh, 1);
+    int nv = (int)lm.mesh.vert.size() - 1;
+    lm.mesh.vert[nv].P() = vcg::Point3d(0.5, 0, 0);
+    lm.mesh.face[0].V(1) = &lm.mesh.vert[nv];            // face0 -> (v0,nv,v2)
+    vcg::tri::Allocator<CMeshOD>::AddFace(lm.mesh,
+        &lm.mesh.vert[nv], &lm.mesh.vert[1], &lm.mesh.vert[2]);  // 新面 (nv,v1,v2)
+
+    auto res = mgr.mergeBack(&mesh, lm, /*targetMark*/ 5);
+
+    // 关键断言：被切的是 face0 -> SetD；邻居 face1 没被切 -> 不能 SetD
+    assert(mesh.face[0].IsD());
+    assert(!mesh.face[1].IsD());
+    std::cout << "testMergeBackSharedEdge passed" << std::endl;
+}
+
 void testExtractLocalMesh() {
     // 两个三角形共享边 (v1,v2)，都 mark=1
     //   v2 ---- v3
@@ -1097,5 +1136,6 @@ int main() {
     testExtractLocalMesh();
     testBuildCutInput();
     testMergeBack();
+    testMergeBackSharedEdge();
     return 0;
 }

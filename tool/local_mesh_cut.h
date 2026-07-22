@@ -25,8 +25,6 @@ public:
         std::vector<int> localFaceToGlobal;           // localFaceIdx -> globalFaceIdx（仅原始面）
         // 边界缝：local 原始边的两个 local 顶点 -> 外部邻接面 global idx
         std::map<std::pair<int,int>, int> seamExternal;
-        // 原始面的 global 顶点对 -> 该 curFaces 面 global idx（用未改动的 m_pMesh 建表，反推来源用）
-        std::map<std::pair<int,int>, int> globalEdgeToCurFace;
     };
 
     // 步骤 A：从 m_pMesh 的 curFaces 提取局部 mesh
@@ -89,23 +87,32 @@ public:
         return false;
     }
 
-    // 反推新面来自哪个原始面（直接返回 global 面下标）：
-    // 取新面里 < Nv0 的原顶点 -> global，用 globalEdgeToCurFace 查它们构成的边属于哪个 curFaces 面。
-    // 用建表时的未改动 m_pMesh 拓扑，不受 cutter 原地改写 local 面的影响。
-    static int deriveOriginGlobal(const LocalMesh& lm, int localFaceIdx) {
+    // 反推新面来自哪个原始面（global）：新面质心落在哪个 curFaces 三角形内，就是被分裂的那个。
+    // 比边查表稳：对"完整边是共享内部边"的切片也能正确归属（质心唯一落在一个原三角内）。
+    static int deriveOriginGlobal(const LocalMesh& lm, int localFaceIdx, CMeshOD* mesh) {
         const CFaceOD& f = lm.mesh.face[localFaceIdx];
-        int origs[3], no = 0;
-        for (int j = 0; j < 3; j++) {
-            int lv = static_cast<int>(f.V(j) - &lm.mesh.vert[0]);
-            if (lv < lm.Nv0 && lv < (int)lm.localToGlobalVert.size())
-                origs[no++] = lm.localToGlobalVert[lv];
+        vcg::Point3d centroid = (f.V(0)->P() + f.V(1)->P() + f.V(2)->P()) / 3.0;
+        for (int gf : lm.localFaceToGlobal) {
+            if (gf < 0 || gf >= (int)mesh->face.size()) continue;
+            if (mesh->face[gf].IsD()) continue;  // already handled by a sibling piece
+            const CFaceOD& of = mesh->face[gf];
+            if (pointInTriangle(centroid, of.V(0)->P(), of.V(1)->P(), of.V(2)->P()))
+                return gf;
         }
-        for (int a = 0; a < no; a++)
-            for (int b = a + 1; b < no; b++) {
-                auto it = lm.globalEdgeToCurFace.find(std::minmax(origs[a], origs[b]));
-                if (it != lm.globalEdgeToCurFace.end()) return it->second;
-            }
         return -1;
+    }
+
+    // p 与 c 是否在直线 ab 同侧（含容差）
+    static bool sameSide(const vcg::Point3d& p, const vcg::Point3d& a,
+                         const vcg::Point3d& b, const vcg::Point3d& c) {
+        vcg::Point3d cp1 = (b - a) ^ (p - a);
+        vcg::Point3d cp2 = (b - a) ^ (c - a);
+        return (cp1 * cp2) >= -1e-9;
+    }
+    // p 是否在三角形 abc 内（共面，用同侧法）
+    static bool pointInTriangle(const vcg::Point3d& p, const vcg::Point3d& a,
+                                const vcg::Point3d& b, const vcg::Point3d& c) {
+        return sameSide(p, a, b, c) && sameSide(p, b, c, a) && sameSide(p, c, a, b);
     }
 
     // 步骤 C：把 cutter 切过的 local mesh merge 回主网格。
@@ -138,7 +145,7 @@ public:
             res.newFaceGlobals.push_back(newG);
 
             // 反推来源 global -> SetD
-            int splitG = deriveOriginGlobal(lm, i);
+            int splitG = deriveOriginGlobal(lm, i, mesh);
             if (splitG >= 0 && splitG < (int)mesh->face.size() && !mesh->face[splitG].IsD()) {
                 mesh->face[splitG].SetD();
                 res.splitOriginGlobals.push_back(splitG);
@@ -192,16 +199,7 @@ inline LocalMeshCutManager::LocalMesh LocalMeshCutManager::extractLocalMesh(
 
     lm.Nv0 = (int)lm.mesh.vert.size();
 
-    // 4) 建 globalEdgeToCurFace：用未改动的 mesh 原始面建表（反推来源用）
-    for (int gf : curFaces) {
-        for (int j = 0; j < 3; j++) {
-            int a = mesh->face[gf].V(j)->Index();
-            int b = mesh->face[gf].V((j+1)%3)->Index();
-            lm.globalEdgeToCurFace[std::minmax(a, b)] = gf;
-        }
-    }
-
-    // 5) 抓边界缝：curFaces 边在原 mesh 里 FFp 指向 curFaces 外部的，记外部面
+    // 4) 抓边界缝：curFaces 边在原 mesh 里 FFp 指向 curFaces 外部的，记外部面
     std::set<int> inCur(curFaces.begin(), curFaces.end());
     for (int gf : curFaces) {
         for (int j = 0; j < 3; j++) {
