@@ -396,8 +396,13 @@ void JasMeshMarkAndCutSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRe
 		// 调试输出：折线
 		debugWritePolylines(m_debugIterCounter, polylines);
 
-		// 2.4 从端点延长切割
+		// 2.4 从端点延长切割（只对 NON_MANIFOLD 折线进行延长）
 		for (const auto& polyline : polylines) {
+			// 只有 NON_MANIFOLD 类型的折线才需要延长切割
+			if (polyline.type != MeshCutByMark::CUT_EDGE_NON_MANIFOLD) {
+				continue;
+			}
+
 			// 检查首端点
 			if (!m_cutPlaneManager.isOnMarkDiffEdge(
 					polyline.startFaceIdx, polyline.startEdgeIdx, m_pMesh)) {
