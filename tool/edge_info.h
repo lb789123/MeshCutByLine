@@ -7,8 +7,7 @@
 #include <utility>
 #include <algorithm>
 
-// Forward declaration - CMeshO is defined in cmesh.h with vcglib dependency
-class CMeshO;
+#include "cmesh.h"
 
 namespace MeshCutByMark {
 
@@ -66,6 +65,74 @@ private:
     std::unordered_map<std::pair<int,int>, std::vector<int>, EdgeHash, EdgeEqual> m_edgeToFaces;
     std::unordered_map<std::pair<int,int>, CutEdgeType, EdgeHash, EdgeEqual> m_edgeTypes;
 };
+
+// --- Method implementations ---
+
+inline void EdgeInfoManager::buildEdgeInfo(CMeshO* mesh) {
+    m_mesh = mesh;
+    m_edgeToFaces.clear();
+    m_edgeTypes.clear();
+
+    // Traverse all triangles, build edge->face mapping
+    for (int i = 0; i < (int)mesh->face.size(); i++) {
+        if (mesh->face[i].IsD()) continue; // skip deleted faces
+
+        for (int j = 0; j < 3; j++) {
+            int v0 = mesh->face[i].V(j)->Index();
+            int v1 = mesh->face[i].V((j + 1) % 3)->Index();
+
+            // Normalize so v0 < v1
+            if (v0 > v1) std::swap(v0, v1);
+
+            m_edgeToFaces[{v0, v1}].push_back(i);
+        }
+    }
+
+    // Classify each edge
+    for (const auto& entry : m_edgeToFaces) {
+        const auto& edge = entry.first;
+        const auto& faces = entry.second;
+        CutEdgeType type = CUT_EDGE_NONE;
+
+        if (faces.size() == 1) {
+            type = CUT_EDGE_BOUNDARY;
+        } else if (faces.size() >= 3) {
+            type = CUT_EDGE_NON_MANIFOLD;
+        } else if (faces.size() == 2) {
+            // Check if the two faces have different marks
+            int mark0 = mesh->face[faces[0]].IMark();
+            int mark1 = mesh->face[faces[1]].IMark();
+            if (mark0 != mark1) {
+                type = CUT_EDGE_MARK_DIFF;
+            }
+        }
+
+        m_edgeTypes[edge] = type;
+    }
+}
+
+inline CutEdgeType EdgeInfoManager::getEdgeType(int v0, int v1) const {
+    auto key = std::minmax(v0, v1);
+    auto it = m_edgeTypes.find(key);
+    if (it != m_edgeTypes.end()) {
+        return it->second;
+    }
+    return CUT_EDGE_NONE;
+}
+
+inline std::vector<int> EdgeInfoManager::getAdjacentFaces(int v0, int v1) const {
+    auto key = std::minmax(v0, v1);
+    auto it = m_edgeToFaces.find(key);
+    if (it != m_edgeToFaces.end()) {
+        return it->second;
+    }
+    return {};
+}
+
+inline bool EdgeInfoManager::isCutEdge(int v0, int v1) const {
+    CutEdgeType type = getEdgeType(v0, v1);
+    return type != CUT_EDGE_NONE;
+}
 
 } // namespace MeshCutByMark
 
