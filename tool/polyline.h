@@ -23,7 +23,7 @@ public:
     // Connect cut edges into continuous polylines
     std::vector<Polyline> connectEdgesToPolylines(
         const std::vector<CutEdge>& cutEdges,
-        CMeshO* mesh
+        CMeshOD* mesh
     );
 
 private:
@@ -47,7 +47,7 @@ private:
 
 inline std::vector<Polyline> PolylineManager::connectEdgesToPolylines(
     const std::vector<CutEdge>& cutEdges,
-    CMeshO* mesh
+    CMeshOD* mesh
 ) {
     std::vector<Polyline> polylines;
 

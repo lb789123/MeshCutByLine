@@ -123,10 +123,10 @@ void JasMeshMarkAndSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRegs)
 	if (!m_pMesh->face.IsFFAdjacencyEnabled()) {
 		m_pMesh->face.EnableFFAdjacency();
 	}
-	vcg::tri::UpdateTopology<CMeshO>::FaceFace(*m_pMesh);
+	vcg::tri::UpdateTopology<CMeshOD>::FaceFace(*m_pMesh);
 
 	// 计算法向量
-	vcg::tri::UpdateNormal<CMeshO>::PerFace(*m_pMesh);
+	vcg::tri::UpdateNormal<CMeshOD>::PerFace(*m_pMesh);
 
 	// Phase 2: 延长线切割并标记新区域
 	for (int i = 0; i < (int)m_pMesh->face.size(); i++) {

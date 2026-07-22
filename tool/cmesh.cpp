@@ -23,13 +23,13 @@
 
 #include "cmesh.h"
 
-CMeshO::CMeshO() :
+CMeshOD::CMeshOD() :
 	vcgTriMesh(),
 	sfn(0), svn(0), pvn(0), pfn(0), Tr(Matrix44m::Identity())
 {
 }
 
-CMeshO::CMeshO(const CMeshO& oth) :
+CMeshOD::CMeshOD(const CMeshOD& oth) :
 	vcgTriMesh(), sfn(oth.sfn), svn(oth.svn), 
 	pvn(oth.pvn), pfn(oth.pfn), Tr(oth.Tr)
 {
@@ -40,24 +40,24 @@ CMeshO::CMeshO(const CMeshO& oth) :
 	imark = oth.imark;
 }
 
-CMeshO::CMeshO(CMeshO&& oth)
-	: CMeshO()
+CMeshOD::CMeshOD(CMeshOD&& oth)
+	: CMeshOD()
 {
 	swap(*this, oth);
 }
 
-CMeshO::~CMeshO()
+CMeshOD::~CMeshOD()
 {
 	//no need to call base class destructor. It is called automatically
 }
 
-CMeshO& CMeshO::operator=(CMeshO oth)
+CMeshOD& CMeshOD::operator=(CMeshOD oth)
 {
 	swap(*this, oth);
 	return *this;
 }
 
-Box3m CMeshO::trBB() const
+Box3m CMeshOD::trBB() const
 {
 	Box3m bb;
 	bb.Add(Tr,bbox);
@@ -69,7 +69,7 @@ Box3m CMeshO::trBB() const
  * all the optional fields that are enabled on the other mesh, otherwise
  * they won't be copied on this mesh...........
  */
-void CMeshO::enableComponentsFromOtherMesh(const CMeshO& oth)
+void CMeshOD::enableComponentsFromOtherMesh(const CMeshOD& oth)
 {
 	//vertex
 	if (oth.vert.IsVFAdjacencyEnabled())
@@ -102,17 +102,17 @@ void CMeshO::enableComponentsFromOtherMesh(const CMeshO& oth)
 	std::vector<std::string> perVScalarAttrs, perVPointAttrs;
 	std::vector<std::string> perFScalarAttrs, perFPointAttrs;
 
-	vcg::tri::Allocator<CMeshO>::GetAllPerVertexAttribute<Scalarm>(oth, perVScalarAttrs);
-	vcg::tri::Allocator<CMeshO>::GetAllPerVertexAttribute<Point3m>(oth, perVPointAttrs);
-	vcg::tri::Allocator<CMeshO>::GetAllPerFaceAttribute<Scalarm>(oth, perFScalarAttrs);
-	vcg::tri::Allocator<CMeshO>::GetAllPerFaceAttribute<Point3m>(oth, perFPointAttrs);
+	vcg::tri::Allocator<CMeshOD>::GetAllPerVertexAttribute<Scalarm>(oth, perVScalarAttrs);
+	vcg::tri::Allocator<CMeshOD>::GetAllPerVertexAttribute<Point3m>(oth, perVPointAttrs);
+	vcg::tri::Allocator<CMeshOD>::GetAllPerFaceAttribute<Scalarm>(oth, perFScalarAttrs);
+	vcg::tri::Allocator<CMeshOD>::GetAllPerFaceAttribute<Point3m>(oth, perFPointAttrs);
 
 	for(const std::string& attr : perVScalarAttrs)
-		vcg::tri::Allocator<CMeshO>::AddPerVertexAttribute<Scalarm>(*this, attr);
+		vcg::tri::Allocator<CMeshOD>::AddPerVertexAttribute<Scalarm>(*this, attr);
 	for(const std::string& attr : perVPointAttrs)
-		vcg::tri::Allocator<CMeshO>::AddPerVertexAttribute<Point3m>(*this, attr);
+		vcg::tri::Allocator<CMeshOD>::AddPerVertexAttribute<Point3m>(*this, attr);
 	for(const std::string& attr : perFScalarAttrs)
-		vcg::tri::Allocator<CMeshO>::AddPerFaceAttribute<Scalarm>(*this, attr);
+		vcg::tri::Allocator<CMeshOD>::AddPerFaceAttribute<Scalarm>(*this, attr);
 	for(const std::string& attr : perFPointAttrs)
-		vcg::tri::Allocator<CMeshO>::AddPerFaceAttribute<Point3m>(*this, attr);
+		vcg::tri::Allocator<CMeshOD>::AddPerFaceAttribute<Point3m>(*this, attr);
 }

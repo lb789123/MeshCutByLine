@@ -49,7 +49,7 @@ struct EdgeEqual {
 class EdgeInfoManager {
 public:
     // 构建边信息
-    void buildEdgeInfo(CMeshO* mesh);
+    void buildEdgeInfo(CMeshOD* mesh);
 
     // 获取边的类型
     CutEdgeType getEdgeType(int v0, int v1) const;
@@ -61,14 +61,14 @@ public:
     bool isCutEdge(int v0, int v1) const;
 
 private:
-    CMeshO* m_mesh;
+    CMeshOD* m_mesh;
     std::unordered_map<std::pair<int,int>, std::vector<int>, EdgeHash, EdgeEqual> m_edgeToFaces;
     std::unordered_map<std::pair<int,int>, CutEdgeType, EdgeHash, EdgeEqual> m_edgeTypes;
 };
 
 // --- Method implementations ---
 
-inline void EdgeInfoManager::buildEdgeInfo(CMeshO* mesh) {
+inline void EdgeInfoManager::buildEdgeInfo(CMeshOD* mesh) {
     m_mesh = mesh;
     m_edgeToFaces.clear();
     m_edgeTypes.clear();

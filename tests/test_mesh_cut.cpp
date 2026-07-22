@@ -26,18 +26,18 @@ void testBuildEdgeInfo() {
     //  /   \    |
     // v0 --- v1
     //
-    CMeshO mesh;
+    CMeshOD mesh;
 
     // Add 4 vertices (reserves space first to avoid reallocation)
-    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 4);
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
     mesh.vert[0].P() = Point3m(0, 0, 0);
     mesh.vert[1].P() = Point3m(1, 0, 0);
     mesh.vert[2].P() = Point3m(0, 1, 0);
     mesh.vert[3].P() = Point3m(1, 1, 0);
 
     // Add 2 triangles using vertex pointers (safe after AddVertices batch)
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
 
     // Enable mark component and set marks
     mesh.face.EnableMark();
@@ -93,10 +93,10 @@ void testFindCutEdges() {
     // Face 2: v0, v4, v2 (mark=1) -- shares edge (0,2) with face 0 (same mark)
     // Face 3: v4, v1, v2 (mark=1) -- shares edge (1,2) with faces 0 and 1 (non-manifold)
 
-    CMeshO mesh;
+    CMeshOD mesh;
 
     // Add 5 vertices
-    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 5);
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 5);
     mesh.vert[0].P() = Point3m(0, 0, 0);
     mesh.vert[1].P() = Point3m(1, 0, 0);
     mesh.vert[2].P() = Point3m(0, 1, 0);
@@ -104,10 +104,10 @@ void testFindCutEdges() {
     mesh.vert[4].P() = Point3m(0, -1, 0);
 
     // Add 4 faces
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[4], &mesh.vert[2]);
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[4], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[4], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[4], &mesh.vert[1], &mesh.vert[2]);
 
     // Enable mark component and set marks
     mesh.face.EnableMark();
@@ -199,7 +199,7 @@ void testConnectEdgesToPolylines() {
     cutEdges.push_back({2, 3, 2, 0, MeshCutByMark::CUT_EDGE_MARK_DIFF});
 
     MeshCutByMark::PolylineManager polylineManager;
-    CMeshO mesh; // empty mesh, only used for the API signature
+    CMeshOD mesh; // empty mesh, only used for the API signature
 
     auto polylines = polylineManager.connectEdgesToPolylines(cutEdges, &mesh);
 
@@ -226,7 +226,7 @@ void testConnectEdgesToPolylinesMultiple() {
     cutEdges.push_back({4, 5, 2, 0, MeshCutByMark::CUT_EDGE_MARK_DIFF});
 
     MeshCutByMark::PolylineManager polylineManager;
-    CMeshO mesh;
+    CMeshOD mesh;
 
     auto polylines = polylineManager.connectEdgesToPolylines(cutEdges, &mesh);
 
@@ -259,7 +259,7 @@ void testConnectEdgesToPolylinesEmpty() {
     // Empty input should return empty output
     std::vector<MeshCutByMark::CutEdge> cutEdges;
     MeshCutByMark::PolylineManager polylineManager;
-    CMeshO mesh;
+    CMeshOD mesh;
 
     auto polylines = polylineManager.connectEdgesToPolylines(cutEdges, &mesh);
     assert(polylines.empty());
@@ -275,18 +275,18 @@ void testMakeCutPlane() {
     //  /   \    |
     // v0 --- v1
     //
-    CMeshO mesh;
-    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 4);
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
     mesh.vert[0].P() = Point3m(0, 0, 0);
     mesh.vert[1].P() = Point3m(1, 0, 0);
     mesh.vert[2].P() = Point3m(0, 1, 0);
     mesh.vert[3].P() = Point3m(1, 1, 0);
 
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
 
     // Compute face normals
-    vcg::tri::UpdateNormal<CMeshO>::PerFace(mesh);
+    vcg::tri::UpdateNormal<CMeshOD>::PerFace(mesh);
 
     // Create a polyline along the shared edge
     MeshCutByMark::Polyline polyline;
@@ -326,17 +326,17 @@ void testMakeCutPlaneLongPolyline() {
     //  /   \    |
     // v0 --- v1
     //
-    CMeshO mesh;
-    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 4);
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
     mesh.vert[0].P() = Point3m(0, 0, 0);
     mesh.vert[1].P() = Point3m(1, 0, 0);
     mesh.vert[2].P() = Point3m(0, 1, 0);
     mesh.vert[3].P() = Point3m(1, 1, 0);
 
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
 
-    vcg::tri::UpdateNormal<CMeshO>::PerFace(mesh);
+    vcg::tri::UpdateNormal<CMeshOD>::PerFace(mesh);
 
     // Polyline: 0 -> 1 -> 3
     MeshCutByMark::Polyline polyline;
@@ -375,19 +375,19 @@ void testIsOnMarkDiffEdge() {
     //  /   \    |
     // v0 --- v1
     //
-    CMeshO mesh;
-    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 4);
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
     mesh.vert[0].P() = Point3m(0, 0, 0);
     mesh.vert[1].P() = Point3m(1, 0, 0);
     mesh.vert[2].P() = Point3m(0, 1, 0);
     mesh.vert[3].P() = Point3m(1, 1, 0);
 
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
 
     // Enable FF adjacency and compute topology
     mesh.face.EnableFFAdjacency();
-    vcg::tri::UpdateTopology<CMeshO>::FaceFace(mesh);
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
 
     // Enable marks and set different marks
     mesh.face.EnableMark();
@@ -425,15 +425,15 @@ void testSignedDistanceAndIntersection() {
     // We test via makeCutPlane which internally uses signedDistance
 
     // Create a minimal mesh and polyline for the test
-    CMeshO mesh;
-    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 4);
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
     mesh.vert[0].P() = Point3m(0, 0, 0);
     mesh.vert[1].P() = Point3m(1, 0, 0);
     mesh.vert[2].P() = Point3m(0, 1, 0);
     mesh.vert[3].P() = Point3m(1, 1, 0);
 
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
-    vcg::tri::UpdateNormal<CMeshO>::PerFace(mesh);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::UpdateNormal<CMeshOD>::PerFace(mesh);
 
     MeshCutByMark::Polyline polyline;
     polyline.vertexIndices = {0, 1};
@@ -462,20 +462,20 @@ void testFloodFill() {
     //  /   \    |
     // v0 --- v1
     //
-    CMeshO mesh;
+    CMeshOD mesh;
 
-    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 4);
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
     mesh.vert[0].P() = Point3m(0, 0, 0);
     mesh.vert[1].P() = Point3m(1, 0, 0);
     mesh.vert[2].P() = Point3m(0, 1, 0);
     mesh.vert[3].P() = Point3m(1, 1, 0);
 
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
 
     // Enable FF adjacency and compute topology
     mesh.face.EnableFFAdjacency();
-    vcg::tri::UpdateTopology<CMeshO>::FaceFace(mesh);
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
 
     // Enable marks and set same marks
     mesh.face.EnableMark();
@@ -510,20 +510,20 @@ void testFloodFillMarkDiff() {
     //  /   \    |
     // v0 --- v1
     //
-    CMeshO mesh;
+    CMeshOD mesh;
 
-    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 4);
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
     mesh.vert[0].P() = Point3m(0, 0, 0);
     mesh.vert[1].P() = Point3m(1, 0, 0);
     mesh.vert[2].P() = Point3m(0, 1, 0);
     mesh.vert[3].P() = Point3m(1, 1, 0);
 
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
 
     // Enable FF adjacency and compute topology
     mesh.face.EnableFFAdjacency();
-    vcg::tri::UpdateTopology<CMeshO>::FaceFace(mesh);
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
 
     // Enable marks and set different marks
     mesh.face.EnableMark();
@@ -558,18 +558,18 @@ void testFloodFillBoundary() {
     //  /   \
     // v0 --- v1
     //
-    CMeshO mesh;
+    CMeshOD mesh;
 
-    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 3);
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 3);
     mesh.vert[0].P() = Point3m(0, 0, 0);
     mesh.vert[1].P() = Point3m(1, 0, 0);
     mesh.vert[2].P() = Point3m(0, 1, 0);
 
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
 
     // Enable FF adjacency and compute topology
     mesh.face.EnableFFAdjacency();
-    vcg::tri::UpdateTopology<CMeshO>::FaceFace(mesh);
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
 
     // Enable marks
     mesh.face.EnableMark();
@@ -611,23 +611,23 @@ void testExtractSubRegions() {
     // (by treating edge v0-v4 as a cut edge), we get two sub-regions:
     // {0, 1, 2} and {3}
 
-    CMeshO mesh;
+    CMeshOD mesh;
 
-    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 5);
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 5);
     mesh.vert[0].P() = Point3m(0, 0, 0);
     mesh.vert[1].P() = Point3m(1, 0, 0);
     mesh.vert[2].P() = Point3m(1, 1, 0);
     mesh.vert[3].P() = Point3m(0, 1, 0);
     mesh.vert[4].P() = Point3m(0.5, 0.5, 0);  // center
 
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[4]);
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[2], &mesh.vert[4]);
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[2], &mesh.vert[3], &mesh.vert[4]);
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[3], &mesh.vert[0], &mesh.vert[4]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[4]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[2], &mesh.vert[4]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[2], &mesh.vert[3], &mesh.vert[4]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[3], &mesh.vert[0], &mesh.vert[4]);
 
     // Enable FF adjacency and compute topology
     mesh.face.EnableFFAdjacency();
-    vcg::tri::UpdateTopology<CMeshO>::FaceFace(mesh);
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
 
     // Enable marks (all same mark)
     mesh.face.EnableMark();
@@ -652,14 +652,14 @@ void testExtractSubRegions() {
 
 void testMarkSubRegions() {
     // Test marking sub-regions with incrementing counters
-    CMeshO mesh;
+    CMeshOD mesh;
 
-    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 3);
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 3);
     mesh.vert[0].P() = Point3m(0, 0, 0);
     mesh.vert[1].P() = Point3m(1, 0, 0);
     mesh.vert[2].P() = Point3m(0, 1, 0);
 
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
 
     MeshCutByMark::RegionMarker regionMarker;
     regionMarker.initNewMark(&mesh);
@@ -681,14 +681,14 @@ void testMarkSubRegions() {
 
 void testInitNewMark() {
     // Test that initNewMark zeros all face marks
-    CMeshO mesh;
+    CMeshOD mesh;
 
-    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 3);
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 3);
     mesh.vert[0].P() = Point3m(0, 0, 0);
     mesh.vert[1].P() = Point3m(1, 0, 0);
     mesh.vert[2].P() = Point3m(0, 1, 0);
 
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
 
     MeshCutByMark::RegionMarker regionMarker;
     regionMarker.initNewMark(&mesh);
@@ -714,14 +714,14 @@ void testExtractBoundaryEdges() {
     //  /   \
     // v0 --- v1
     //
-    CMeshO mesh;
+    CMeshOD mesh;
 
-    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 3);
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 3);
     mesh.vert[0].P() = Point3m(0, 0, 0);
     mesh.vert[1].P() = Point3m(1, 0, 0);
     mesh.vert[2].P() = Point3m(0, 1, 0);
 
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
 
     JasMeshMarkAndSplit splitter;
     splitter.SetMainMesh(&mesh);
@@ -752,16 +752,16 @@ void testExtractBoundaryEdgesTwoTriangles() {
     //  /   \    |
     // v0 --- v1
     //
-    CMeshO mesh;
+    CMeshOD mesh;
 
-    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 4);
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
     mesh.vert[0].P() = Point3m(0, 0, 0);
     mesh.vert[1].P() = Point3m(1, 0, 0);
     mesh.vert[2].P() = Point3m(0, 1, 0);
     mesh.vert[3].P() = Point3m(1, 1, 0);
 
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
 
     JasMeshMarkAndSplit splitter;
     splitter.SetMainMesh(&mesh);
@@ -795,16 +795,16 @@ void testSplitMeshByMarkAndEdge() {
     //  /   \    |
     // v0 --- v1
     //
-    CMeshO mesh;
+    CMeshOD mesh;
 
-    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 4);
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
     mesh.vert[0].P() = Point3m(0, 0, 0);
     mesh.vert[1].P() = Point3m(1, 0, 0);
     mesh.vert[2].P() = Point3m(0, 1, 0);
     mesh.vert[3].P() = Point3m(1, 1, 0);
 
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
 
     // Set different marks on the two faces
     mesh.face.EnableMark();
@@ -853,16 +853,16 @@ void testSplitMeshByMarkAndEdgeSameMark() {
     //  /   \    |
     // v0 --- v1
     //
-    CMeshO mesh;
+    CMeshOD mesh;
 
-    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 4);
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
     mesh.vert[0].P() = Point3m(0, 0, 0);
     mesh.vert[1].P() = Point3m(1, 0, 0);
     mesh.vert[2].P() = Point3m(0, 1, 0);
     mesh.vert[3].P() = Point3m(1, 1, 0);
 
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
 
     // Same marks
     mesh.face.EnableMark();
@@ -900,10 +900,10 @@ void testIntegration() {
     // Faces 0-1 share edge (1,2), same mark => not a cut edge
     // Faces 1-2 share edge (1,3), different mark => cut edge
     // Faces 2-3 share edge (3,4), same mark => not a cut edge
-    CMeshO mesh;
+    CMeshOD mesh;
 
     // Add 6 vertices
-    vcg::tri::Allocator<CMeshO>::AddVertices(mesh, 6);
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 6);
     mesh.vert[0].P() = Point3m(0, 0, 0);
     mesh.vert[1].P() = Point3m(1, 0, 0);
     mesh.vert[2].P() = Point3m(0, 1, 0);
@@ -912,10 +912,10 @@ void testIntegration() {
     mesh.vert[5].P() = Point3m(2, 1, 0);
 
     // Add 4 triangles
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[1], &mesh.vert[4], &mesh.vert[3]);
-    vcg::tri::Allocator<CMeshO>::AddFace(mesh, &mesh.vert[4], &mesh.vert[5], &mesh.vert[3]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[4], &mesh.vert[3]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[4], &mesh.vert[5], &mesh.vert[3]);
 
     // Set marks: faces 0-1 => mark 1, faces 2-3 => mark 2
     mesh.face.EnableMark();

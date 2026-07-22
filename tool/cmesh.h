@@ -70,21 +70,21 @@ public:	static void Name(std::vector<std::string> & name){name.push_back(std::st
 }//end namespace vcg
 
 // Forward declarations needed for creating the used types
-class CVertexO;
-class CEdgeO;
-class CFaceO;
+class CVertexOD;
+class CEdgeOD;
+class CFaceOD;
 
 // Declaration of the semantic of the used types
-class CUsedTypesO: public vcg::UsedTypes < vcg::Use<CVertexO>::AsVertexType,
-		vcg::Use<CEdgeO   >::AsEdgeType,
-		vcg::Use<CFaceO  >::AsFaceType >{};
+class CUsedTypesO: public vcg::UsedTypes < vcg::Use<CVertexOD>::AsVertexType,
+		vcg::Use<CEdgeOD   >::AsEdgeType,
+		vcg::Use<CFaceOD  >::AsFaceType >{};
 
 
 // The Main Vertex Class
 // Most of the attributes are optional and must be enabled before use.
 // Each vertex needs 40 byte, on 32bit arch. and 44 byte on 64bit arch.
 
-class CVertexO  : public vcg::Vertex< CUsedTypesO,
+class CVertexOD  : public vcg::Vertex< CUsedTypesO,
 		vcg::vertex::InfoOcf,           /*  4b */
 		vcg::vertex::Coord3m,           /* 12b */
 		vcg::vertex::BitFlags,          /*  4b */
@@ -101,7 +101,7 @@ class CVertexO  : public vcg::Vertex< CUsedTypesO,
 
 
 // The Main Edge Class
-class CEdgeO : public vcg::Edge<CUsedTypesO,
+class CEdgeOD : public vcg::Edge<CUsedTypesO,
 		vcg::edge::BitFlags,          /*  4b */
 		vcg::edge::EVAdj,
 		vcg::edge::EEAdj
@@ -109,7 +109,7 @@ class CEdgeO : public vcg::Edge<CUsedTypesO,
 };
 
 // Each face needs 32 byte, on 32bit arch. and 48 byte on 64bit arch.
-class CFaceO    : public vcg::Face<  CUsedTypesO,
+class CFaceOD    : public vcg::Face<  CUsedTypesO,
 		vcg::face::InfoOcf,              /* 4b */
 		vcg::face::VertexRef,            /*12b */
 		vcg::face::BitFlags,             /* 4b */
@@ -123,22 +123,22 @@ class CFaceO    : public vcg::Face<  CUsedTypesO,
 		vcg::face::WedgeTexCoordfOcf     /* 0b */
 		> {};
 
-typedef vcg::tri::TriMesh< vcg::vertex::vector_ocf<CVertexO>, vcg::face::vector_ocf<CFaceO> > vcgTriMesh;
+typedef vcg::tri::TriMesh< vcg::vertex::vector_ocf<CVertexOD>, vcg::face::vector_ocf<CFaceOD> > vcgTriMesh;
 
-class CMeshO    : public vcgTriMesh
+class CMeshOD    : public vcgTriMesh
 {
 public :
-	CMeshO();
+	CMeshOD();
 	
-	CMeshO(const CMeshO& oth);
+	CMeshOD(const CMeshOD& oth);
 	
-	CMeshO(CMeshO&& oth);
+	CMeshOD(CMeshOD&& oth);
 
-	virtual ~CMeshO();
+	virtual ~CMeshOD();
 	
-	CMeshO& operator=(CMeshO oth);
+	CMeshOD& operator=(CMeshOD oth);
 
-	friend void swap(CMeshO& m1, CMeshO& m2);
+	friend void swap(CMeshOD& m1, CMeshOD& m2);
 	
 	Box3m trBB() const;
 	
@@ -151,11 +151,11 @@ public :
 	Matrix44m Tr; // Usually it is the identity. It is applied in rendering and filters can or cannot use it. (most of the filter will ignore this)
 
 private:
-	void enableComponentsFromOtherMesh(const CMeshO& oth);
+	void enableComponentsFromOtherMesh(const CMeshOD& oth);
 };
 
 //must be inlined
-inline void swap(CMeshO& m1, CMeshO& m2)
+inline void swap(CMeshOD& m1, CMeshOD& m2)
 {
 	using std::swap;
 	swap(m1.vn, m2.vn);

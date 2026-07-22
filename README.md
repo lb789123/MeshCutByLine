@@ -237,7 +237,7 @@ All 21 tests passed!
 #include "JasMeshMarkAndSplit.h"
 
 // 创建网格
-CMeshO mesh;
+CMeshOD mesh;
 // ... 加载或创建网格 ...
 
 // 设置 mark（每个三角形的平面 ID）

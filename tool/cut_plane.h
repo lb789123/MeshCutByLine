@@ -15,21 +15,21 @@ public:
     vcg::Plane3d makeCutPlane(
         const Polyline& polyline,
         bool isStart,
-        CMeshO* mesh
+        CMeshOD* mesh
     );
 
     // Cut a triangle by a plane
     void cutTriangleByPlane(
         int faceIdx,
         const vcg::Plane3d& plane,
-        CMeshO* mesh
+        CMeshOD* mesh
     );
 
     // Check if an edge separates faces with different marks
     bool isOnMarkDiffEdge(
         int faceIdx,
         int edgeIdx,
-        CMeshO* mesh
+        CMeshOD* mesh
     );
 
 private:
@@ -51,7 +51,7 @@ private:
 inline vcg::Plane3d CutPlaneManager::makeCutPlane(
     const Polyline& polyline,
     bool isStart,
-    CMeshO* mesh
+    CMeshOD* mesh
 ) {
     // Get endpoint vertex index and face index
     int vertexIdx = isStart ? polyline.vertexIndices[0] : polyline.vertexIndices.back();
@@ -107,7 +107,7 @@ inline vcg::Point3d CutPlaneManager::intersectSegmentPlane(
 inline bool CutPlaneManager::isOnMarkDiffEdge(
     int faceIdx,
     int edgeIdx,
-    CMeshO* mesh
+    CMeshOD* mesh
 ) {
     // Get the two vertices of the edge
     int v0 = mesh->face[faceIdx].V(edgeIdx)->Index();
@@ -119,7 +119,7 @@ inline bool CutPlaneManager::isOnMarkDiffEdge(
     }
 
     // Get the adjacent face across this edge
-    CFaceO* adjFace = mesh->face[faceIdx].FFp(edgeIdx);
+    CFaceOD* adjFace = mesh->face[faceIdx].FFp(edgeIdx);
     if (adjFace == nullptr) {
         return false;  // boundary edge
     }
@@ -136,7 +136,7 @@ inline bool CutPlaneManager::isOnMarkDiffEdge(
 inline void CutPlaneManager::cutTriangleByPlane(
     int faceIdx,
     const vcg::Plane3d& plane,
-    CMeshO* mesh
+    CMeshOD* mesh
 ) {
     // Compute signed distances from each vertex to the cutting plane
     double d0 = signedDistance(mesh->face[faceIdx].V(0)->P(), plane);

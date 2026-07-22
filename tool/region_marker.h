@@ -12,14 +12,14 @@ namespace MeshCutByMark {
 class RegionMarker {
 public:
     // Initialize newMark storage for all faces
-    void initNewMark(CMeshO* mesh);
+    void initNewMark(CMeshOD* mesh);
 
     // Flood-fill to find connected region starting from startFaceIdx
     // Only crosses edges that are not cut edges and faces with the same targetMark
     std::vector<int> floodFill(
         int startFaceIdx,
         int targetMark,
-        CMeshO* mesh,
+        CMeshOD* mesh,
         const EdgeInfoManager& edgeInfo
     );
 
@@ -27,13 +27,13 @@ public:
     // Returns connected components separated by cut edges
     std::vector<std::vector<int>> extractSubRegions(
         const std::vector<int>& curFaces,
-        CMeshO* mesh
+        CMeshOD* mesh
     );
 
     // Mark sub-regions with incrementing new mark values
     void markSubRegions(
         const std::vector<std::vector<int>>& subRegions,
-        CMeshO* mesh,
+        CMeshOD* mesh,
         int& newMarkCounter
     );
 
@@ -45,7 +45,7 @@ public:
 
 private:
     // Check if an edge is a cut edge (boundary edge with no valid FF adjacency neighbor)
-    bool isCutEdge(int faceIdx, int edgeIdx, CMeshO* mesh);
+    bool isCutEdge(int faceIdx, int edgeIdx, CMeshOD* mesh);
 
     // Per-face newMark storage (parallel to mesh->face)
     std::vector<int> m_newMark;
@@ -53,7 +53,7 @@ private:
 
 // --- Implementations ---
 
-inline void RegionMarker::initNewMark(CMeshO* mesh) {
+inline void RegionMarker::initNewMark(CMeshOD* mesh) {
     m_newMark.assign(mesh->face.size(), 0);
 }
 
@@ -68,14 +68,14 @@ inline void RegionMarker::setNewMark(int faceIdx, int value) {
         m_newMark[faceIdx] = value;
 }
 
-inline bool RegionMarker::isCutEdge(int faceIdx, int edgeIdx, CMeshO* mesh) {
+inline bool RegionMarker::isCutEdge(int faceIdx, int edgeIdx, CMeshOD* mesh) {
     // Check if FF adjacency is enabled
     if (!mesh->face.IsFFAdjacencyEnabled()) {
         return false;
     }
 
     // Get the adjacent face across this edge
-    CFaceO* adjFace = mesh->face[faceIdx].FFp(edgeIdx);
+    CFaceOD* adjFace = mesh->face[faceIdx].FFp(edgeIdx);
     if (adjFace == nullptr) {
         return true;  // boundary edge -> cut edge
     }
@@ -91,7 +91,7 @@ inline bool RegionMarker::isCutEdge(int faceIdx, int edgeIdx, CMeshO* mesh) {
 inline std::vector<int> RegionMarker::floodFill(
     int startFaceIdx,
     int targetMark,
-    CMeshO* mesh,
+    CMeshOD* mesh,
     const EdgeInfoManager& /*edgeInfo*/
 ) {
     std::vector<int> result;
@@ -135,7 +135,7 @@ inline std::vector<int> RegionMarker::floodFill(
 
 inline std::vector<std::vector<int>> RegionMarker::extractSubRegions(
     const std::vector<int>& curFaces,
-    CMeshO* mesh
+    CMeshOD* mesh
 ) {
     std::vector<std::vector<int>> subRegions;
 
@@ -195,7 +195,7 @@ inline std::vector<std::vector<int>> RegionMarker::extractSubRegions(
 
 inline void RegionMarker::markSubRegions(
     const std::vector<std::vector<int>>& subRegions,
-    CMeshO* /*mesh*/,
+    CMeshOD* /*mesh*/,
     int& newMarkCounter
 ) {
     for (const auto& region : subRegions) {

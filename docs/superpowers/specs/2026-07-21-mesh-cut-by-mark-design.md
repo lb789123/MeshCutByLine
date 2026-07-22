@@ -105,7 +105,7 @@ struct CutEdge {
 每个 face 需要新增一个 `newMark` 属性，用于记录切割后所属的简单多边形 ID：
 
 ```cpp
-// 在 CFaceO 中添加
+// 在 CFaceOD 中添加
 int newMark;  // 切割后的简单多边形 ID，0 表示未处理
 ```
 
@@ -145,13 +145,13 @@ public:
     JasMeshMarkAndSplit();
     ~JasMeshMarkAndSplit();
 
-    void SetMainMesh(CMeshO* pMesh) { m_pMesh = pMesh; }
+    void SetMainMesh(CMeshOD* pMesh) { m_pMesh = pMesh; }
 
     // 返回分割后的多个三维多边形
     void SplitMeshByMarkAndEdge(std::vector<splitReg>& retRegs);
 
 private:
-    CMeshO* m_pMesh;
+    CMeshOD* m_pMesh;
     int m_newMarkCounter; // 新标记计数器
 };
 ```
@@ -729,7 +729,7 @@ std::vector<std::vector<int>> extractBoundaryEdges(const std::vector<int>& regio
 
 | 结构 | 用途 |
 |------|------|
-| `CMeshO` | 网格数据结构 |
+| `CMeshOD` | 网格数据结构 |
 | `FFAdjOcf` | 面-面邻接关系（用于遍历邻接面） |
 | `BitFlags` | 面的边选中标记 |
 
@@ -771,7 +771,7 @@ struct SplitRegion {
 ### 7.2 使用示例
 
 ```cpp
-CMeshO mesh;
+CMeshOD mesh;
 // ... 加载 mesh ...
 
 JasMeshMarkAndSplit splitter;

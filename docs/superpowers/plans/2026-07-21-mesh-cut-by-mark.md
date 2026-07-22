@@ -73,7 +73,7 @@ struct EdgeHash {
 class EdgeInfoManager {
 public:
     // 构建边信息
-    void buildEdgeInfo(CMeshO* mesh);
+    void buildEdgeInfo(CMeshOD* mesh);
     
     // 获取边的类型
     CutEdgeType getEdgeType(int v0, int v1) const;
@@ -85,7 +85,7 @@ public:
     bool isCutEdge(int v0, int v1) const;
     
 private:
-    CMeshO* m_mesh;
+    CMeshOD* m_mesh;
     std::unordered_map<std::pair<int,int>, std::vector<int>, EdgeHash> m_edgeToFaces;
     std::unordered_map<std::pair<int,int>, CutEdgeType, EdgeHash> m_edgeTypes;
 };
@@ -149,7 +149,7 @@ git commit -m "feat: add edge info data structure"
 
 ```cpp
 // 在 tool/edge_info.h 中添加实现
-void EdgeInfoManager::buildEdgeInfo(CMeshO* mesh) {
+void EdgeInfoManager::buildEdgeInfo(CMeshOD* mesh) {
     m_mesh = mesh;
     m_edgeToFaces.clear();
     m_edgeTypes.clear();
@@ -203,7 +203,7 @@ public:
     // ... 现有代码 ...
     
 private:
-    CMeshO* m_pMesh;
+    CMeshOD* m_pMesh;
     MeshCutByMark::EdgeInfoManager m_edgeInfoManager; // 新增
     int m_newMarkCounter; // 新标记计数器
 };
@@ -215,17 +215,17 @@ private:
 // tests/test_mesh_cut.cpp
 void testBuildEdgeInfo() {
     // 创建一个简单的测试网格
-    CMeshO mesh;
+    CMeshOD mesh;
     
     // 添加 4 个顶点
-    auto v0 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(0, 0, 0));
-    auto v1 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(1, 0, 0));
-    auto v2 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(0, 1, 0));
-    auto v3 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(1, 1, 0));
+    auto v0 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(0, 0, 0));
+    auto v1 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(1, 0, 0));
+    auto v2 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(0, 1, 0));
+    auto v3 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(1, 1, 0));
     
     // 添加 2 个三角形
-    auto f0 = vcg::tri::Allocator<CMeshO>::AddFace(mesh, v0, v1, v2);
-    auto f1 = vcg::tri::Allocator<CMeshO>::AddFace(mesh, v1, v3, v2);
+    auto f0 = vcg::tri::Allocator<CMeshOD>::AddFace(mesh, v0, v1, v2);
+    auto f1 = vcg::tri::Allocator<CMeshOD>::AddFace(mesh, v1, v3, v2);
     
     // 设置 mark
     mesh.face[0].mark = 1;
@@ -305,18 +305,18 @@ std::vector<MeshCutByMark::CutEdge> JasMeshMarkAndSplit::findCutEdges(const std:
 // tests/test_mesh_cut.cpp
 void testFindCutEdges() {
     // 创建一个测试网格，包含 3 个三角形
-    CMeshO mesh;
+    CMeshOD mesh;
     
     // 添加顶点
-    auto v0 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(0, 0, 0));
-    auto v1 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(1, 0, 0));
-    auto v2 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(0, 1, 0));
-    auto v3 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(1, 1, 0));
+    auto v0 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(0, 0, 0));
+    auto v1 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(1, 0, 0));
+    auto v2 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(0, 1, 0));
+    auto v3 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(1, 1, 0));
     
     // 添加三角形
-    auto f0 = vcg::tri::Allocator<CMeshO>::AddFace(mesh, v0, v1, v2);
-    auto f1 = vcg::tri::Allocator<CMeshO>::AddFace(mesh, v1, v3, v2);
-    auto f2 = vcg::tri::Allocator<CMeshO>::AddFace(mesh, v0, v2, v3); // 非流形边
+    auto f0 = vcg::tri::Allocator<CMeshOD>::AddFace(mesh, v0, v1, v2);
+    auto f1 = vcg::tri::Allocator<CMeshOD>::AddFace(mesh, v1, v3, v2);
+    auto f2 = vcg::tri::Allocator<CMeshOD>::AddFace(mesh, v0, v2, v3); // 非流形边
     
     // 设置 mark
     mesh.face[0].mark = 1;
@@ -402,7 +402,7 @@ public:
     // 将切割边连接成连续折线
     std::vector<Polyline> connectEdgesToPolylines(
         const std::vector<CutEdge>& cutEdges,
-        CMeshO* mesh
+        CMeshOD* mesh
     );
     
 private:
@@ -433,7 +433,7 @@ private:
 // 在 tool/polyline.h 中添加实现
 std::vector<Polyline> PolylineManager::connectEdgesToPolylines(
     const std::vector<CutEdge>& cutEdges,
-    CMeshO* mesh
+    CMeshOD* mesh
 ) {
     std::vector<Polyline> polylines;
     
@@ -534,7 +534,7 @@ void testConnectEdgesToPolylines() {
     cutEdges.push_back({2, 3, 2, 0, MeshCutByMark::CUT_EDGE_MARK_DIFF});
     
     MeshCutByMark::PolylineManager polylineManager;
-    CMeshO mesh; // 空网格，仅用于测试
+    CMeshOD mesh; // 空网格，仅用于测试
     
     auto polylines = polylineManager.connectEdgesToPolylines(cutEdges, &mesh);
     
@@ -593,21 +593,21 @@ public:
     vcg::Plane3d makeCutPlane(
         const Polyline& polyline,
         bool isStart,
-        CMeshO* mesh
+        CMeshOD* mesh
     );
     
     // 用平面切割三角形
     void cutTriangleByPlane(
         int faceIdx,
         const vcg::Plane3d& plane,
-        CMeshO* mesh
+        CMeshOD* mesh
     );
     
     // 检查端点是否在 mark 不同的边上
     bool isOnMarkDiffEdge(
         int faceIdx,
         int edgeIdx,
-        CMeshO* mesh
+        CMeshOD* mesh
     );
     
 private:
@@ -636,7 +636,7 @@ private:
 vcg::Plane3d CutPlaneManager::makeCutPlane(
     const Polyline& polyline,
     bool isStart,
-    CMeshO* mesh
+    CMeshOD* mesh
 ) {
     // 获取端点信息
     int vertexIdx = isStart ? polyline.vertexIndices[0] : polyline.vertexIndices.back();
@@ -701,12 +701,12 @@ void testMakeCutPlane() {
     polyline.endEdgeIdx = 0;
     
     // 创建测试网格
-    CMeshO mesh;
-    auto v0 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(0, 0, 0));
-    auto v1 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(1, 0, 0));
-    auto v2 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(2, 0, 0));
+    CMeshOD mesh;
+    auto v0 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(0, 0, 0));
+    auto v1 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(1, 0, 0));
+    auto v2 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(2, 0, 0));
     
-    auto f0 = vcg::tri::Allocator<CMeshO>::AddFace(mesh, v0, v1, v2);
+    auto f0 = vcg::tri::Allocator<CMeshOD>::AddFace(mesh, v0, v1, v2);
     mesh.face[0].N() = vcg::Point3d(0, 0, 1); // 法向量
     
     MeshCutByMark::CutPlaneManager cutPlaneManager;
@@ -762,32 +762,32 @@ namespace MeshCutByMark {
 class RegionMarker {
 public:
     // 初始化 newMark 属性
-    void initNewMark(CMeshO* mesh);
+    void initNewMark(CMeshOD* mesh);
     
     // flood-fill 找连通区域
     std::vector<int> floodFill(
         int startFaceIdx,
         int targetMark,
-        CMeshO* mesh,
+        CMeshOD* mesh,
         const EdgeInfoManager& edgeInfo
     );
     
     // 拣选子区域（切割后）
     std::vector<std::vector<int>> extractSubRegions(
         const std::vector<int>& curFaces,
-        CMeshO* mesh
+        CMeshOD* mesh
     );
     
     // 标记子区域
     void markSubRegions(
         const std::vector<std::vector<int>>& subRegions,
-        CMeshO* mesh,
+        CMeshOD* mesh,
         int& newMarkCounter
     );
     
 private:
     // 检查边是否是切割边
-    bool isCutEdge(int faceIdx, int edgeIdx, CMeshO* mesh);
+    bool isCutEdge(int faceIdx, int edgeIdx, CMeshOD* mesh);
     
     // 检查面是否在 curFaces 中
     bool isInCurFaces(int faceIdx, const std::vector<int>& curFaces);
@@ -802,7 +802,7 @@ private:
 
 ```cpp
 // 在 tool/region_marker.h 中添加实现
-void RegionMarker::initNewMark(CMeshO* mesh) {
+void RegionMarker::initNewMark(CMeshOD* mesh) {
     for (int i = 0; i < mesh->face.size(); i++) {
         if (!mesh->face[i].IsD()) {
             mesh->face[i].newMark = 0;
@@ -813,7 +813,7 @@ void RegionMarker::initNewMark(CMeshO* mesh) {
 std::vector<int> RegionMarker::floodFill(
     int startFaceIdx,
     int targetMark,
-    CMeshO* mesh,
+    CMeshOD* mesh,
     const EdgeInfoManager& edgeInfo
 ) {
     std::vector<int> result;
@@ -858,7 +858,7 @@ std::vector<int> RegionMarker::floodFill(
 
 std::vector<std::vector<int>> RegionMarker::extractSubRegions(
     const std::vector<int>& curFaces,
-    CMeshO* mesh
+    CMeshOD* mesh
 ) {
     std::vector<std::vector<int>> subRegions;
     
@@ -909,7 +909,7 @@ std::vector<std::vector<int>> RegionMarker::extractSubRegions(
 
 void RegionMarker::markSubRegions(
     const std::vector<std::vector<int>>& subRegions,
-    CMeshO* mesh,
+    CMeshOD* mesh,
     int& newMarkCounter
 ) {
     for (const auto& region : subRegions) {
@@ -926,16 +926,16 @@ void RegionMarker::markSubRegions(
 ```cpp
 // tests/test_mesh_cut.cpp
 void testFloodFill() {
-    CMeshO mesh;
+    CMeshOD mesh;
     
     // 创建 3 个三角形
-    auto v0 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(0, 0, 0));
-    auto v1 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(1, 0, 0));
-    auto v2 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(0, 1, 0));
-    auto v3 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(1, 1, 0));
+    auto v0 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(0, 0, 0));
+    auto v1 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(1, 0, 0));
+    auto v2 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(0, 1, 0));
+    auto v3 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(1, 1, 0));
     
-    auto f0 = vcg::tri::Allocator<CMeshO>::AddFace(mesh, v0, v1, v2);
-    auto f1 = vcg::tri::Allocator<CMeshO>::AddFace(mesh, v1, v3, v2);
+    auto f0 = vcg::tri::Allocator<CMeshOD>::AddFace(mesh, v0, v1, v2);
+    auto f1 = vcg::tri::Allocator<CMeshOD>::AddFace(mesh, v1, v3, v2);
     
     mesh.face[0].mark = 1;
     mesh.face[1].mark = 1;
@@ -1062,14 +1062,14 @@ std::vector<std::vector<int>> JasMeshMarkAndSplit::extractBoundaryEdges(
 ```cpp
 // tests/test_mesh_cut.cpp
 void testExtractBoundaryEdges() {
-    CMeshO mesh;
+    CMeshOD mesh;
     
     // 创建一个三角形
-    auto v0 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(0, 0, 0));
-    auto v1 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(1, 0, 0));
-    auto v2 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(0, 1, 0));
+    auto v0 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(0, 0, 0));
+    auto v1 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(1, 0, 0));
+    auto v2 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(0, 1, 0));
     
-    auto f0 = vcg::tri::Allocator<CMeshO>::AddFace(mesh, v0, v1, v2);
+    auto f0 = vcg::tri::Allocator<CMeshOD>::AddFace(mesh, v0, v1, v2);
     
     JasMeshMarkAndSplit splitter;
     splitter.SetMainMesh(&mesh);
@@ -1205,16 +1205,16 @@ void JasMeshMarkAndSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRegs)
 ```cpp
 // tests/test_mesh_cut.cpp
 void testSplitMeshByMarkAndEdge() {
-    CMeshO mesh;
+    CMeshOD mesh;
     
     // 创建一个简单的测试网格
-    auto v0 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(0, 0, 0));
-    auto v1 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(1, 0, 0));
-    auto v2 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(0, 1, 0));
-    auto v3 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(1, 1, 0));
+    auto v0 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(0, 0, 0));
+    auto v1 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(1, 0, 0));
+    auto v2 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(0, 1, 0));
+    auto v3 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(1, 1, 0));
     
-    auto f0 = vcg::tri::Allocator<CMeshO>::AddFace(mesh, v0, v1, v2);
-    auto f1 = vcg::tri::Allocator<CMeshO>::AddFace(mesh, v1, v3, v2);
+    auto f0 = vcg::tri::Allocator<CMeshOD>::AddFace(mesh, v0, v1, v2);
+    auto f1 = vcg::tri::Allocator<CMeshOD>::AddFace(mesh, v1, v3, v2);
     
     mesh.face[0].mark = 1;
     mesh.face[1].mark = 2;
@@ -1263,21 +1263,21 @@ git commit -m "feat: implement SplitMeshByMarkAndEdge main algorithm"
 // tests/test_mesh_cut.cpp
 void testIntegration() {
     // 创建一个更复杂的测试网格
-    CMeshO mesh;
+    CMeshOD mesh;
     
     // 添加顶点
-    auto v0 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(0, 0, 0));
-    auto v1 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(1, 0, 0));
-    auto v2 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(0, 1, 0));
-    auto v3 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(1, 1, 0));
-    auto v4 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(2, 0, 0));
-    auto v5 = vcg::tri::Allocator<CMeshO>::AddVertex(mesh, vcg::Point3d(2, 1, 0));
+    auto v0 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(0, 0, 0));
+    auto v1 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(1, 0, 0));
+    auto v2 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(0, 1, 0));
+    auto v3 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(1, 1, 0));
+    auto v4 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(2, 0, 0));
+    auto v5 = vcg::tri::Allocator<CMeshOD>::AddVertex(mesh, vcg::Point3d(2, 1, 0));
     
     // 添加三角形
-    auto f0 = vcg::tri::Allocator<CMeshO>::AddFace(mesh, v0, v1, v2);
-    auto f1 = vcg::tri::Allocator<CMeshO>::AddFace(mesh, v1, v3, v2);
-    auto f2 = vcg::tri::Allocator<CMeshO>::AddFace(mesh, v1, v4, v3);
-    auto f3 = vcg::tri::Allocator<CMeshO>::AddFace(mesh, v4, v5, v3);
+    auto f0 = vcg::tri::Allocator<CMeshOD>::AddFace(mesh, v0, v1, v2);
+    auto f1 = vcg::tri::Allocator<CMeshOD>::AddFace(mesh, v1, v3, v2);
+    auto f2 = vcg::tri::Allocator<CMeshOD>::AddFace(mesh, v1, v4, v3);
+    auto f3 = vcg::tri::Allocator<CMeshOD>::AddFace(mesh, v4, v5, v3);
     
     // 设置 mark
     mesh.face[0].mark = 1;
