@@ -65,6 +65,7 @@ private:
 	void debugWriteFacesOFF(int iterIdx, const char* suffix, const std::vector<int>& faceIndices);
 	void debugWriteSubRegionsOFF(int iterIdx, const std::vector<std::vector<int>>& subRegions);
 	void debugWritePolygonsOBJ(const std::map<int, std::vector<int>>& markToFaces);
+	void debugSaveColoredMesh(const std::vector<splitReg>& regs);
 
 	CMeshOD* m_pMesh = nullptr;
 	MeshCutByMark::EdgeInfoManager m_edgeInfoManager; // 边信息管理器

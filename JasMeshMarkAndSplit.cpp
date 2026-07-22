@@ -5,6 +5,8 @@
 #include <fstream>
 #include <set>
 #include <map>
+#include <cstdlib>
+#include <ctime>
 
 JasMeshMarkAndSplit::JasMeshMarkAndSplit()
 {
@@ -275,6 +277,84 @@ void JasMeshMarkAndSplit::debugWritePolygonsOBJ(
 	ofs.close();
 }
 
+void JasMeshMarkAndSplit::debugSaveColoredMesh(const std::vector<splitReg>& regs)
+{
+	if (!m_debug || regs.empty() || !m_pMesh) return;
+	debugEnsureDir();
+
+	// 启用面颜色
+	if (!m_pMesh->face.IsColorEnabled()) {
+		m_pMesh->face.EnableColor();
+	}
+
+	// 为每个区域生成随机颜色，用 map 管理 (索引 i -> 颜色)
+	std::map<int, vcg::Color4b> colorMap;
+	std::srand(static_cast<unsigned>(std::time(nullptr)));
+	for (int i = 0; i < (int)regs.size(); i++) {
+		unsigned char r = static_cast<unsigned char>(std::rand() % 256);
+		unsigned char g = static_cast<unsigned char>(std::rand() % 256);
+		unsigned char b = static_cast<unsigned char>(std::rand() % 256);
+		colorMap[i] = vcg::Color4b(r, g, b, 255);
+	}
+
+	// 给每个区域的三角形赋颜色
+	for (int i = 0; i < (int)regs.size(); i++) {
+		for (int fi : regs[i].inTris) {
+			m_pMesh->face[fi].C() = colorMap[i];
+		}
+	}
+
+	// 保存带颜色的 OBJ（顶点颜色 = 所属面颜色的平均）
+	std::string path = m_debugOutputDir + "colored_mesh.obj";
+	std::ofstream ofs(path);
+	if (!ofs.is_open()) return;
+
+	// 计算顶点颜色：每个顶点取相邻面颜色的平均
+	int nV = m_pMesh->VN();
+	int nF = m_pMesh->FN();
+	std::vector<vcg::Point4f> vertColors(nV, vcg::Point4f(0, 0, 0, 0));
+	std::vector<int> vertFaceCount(nV, 0);
+
+	for (int i = 0; i < nF; i++) {
+		if (m_pMesh->face[i].IsD()) continue;
+		vcg::Color4b fc = m_pMesh->face[i].C();
+		for (int j = 0; j < 3; j++) {
+			int vi = m_pMesh->face[i].V(j)->Index();
+			vertColors[vi].X() += fc.X() / 255.0f;
+			vertColors[vi].Y() += fc.Y() / 255.0f;
+			vertColors[vi].Z() += fc.Z() / 255.0f;
+			vertFaceCount[vi]++;
+		}
+	}
+
+	for (int i = 0; i < nV; i++) {
+		if (vertFaceCount[i] > 0) {
+			vertColors[i].X() /= vertFaceCount[i];
+			vertColors[i].Y() /= vertFaceCount[i];
+			vertColors[i].Z() /= vertFaceCount[i];
+		}
+	}
+
+	// 写入 OBJ（带顶点颜色）
+	for (int i = 0; i < nV; i++) {
+		const auto& p = m_pMesh->vert[i].P();
+		ofs << "v " << p.X() << " " << p.Y() << " " << p.Z()
+		    << " " << vertColors[i].X()
+		    << " " << vertColors[i].Y()
+		    << " " << vertColors[i].Z() << "\n";
+	}
+
+	for (int i = 0; i < nF; i++) {
+		if (m_pMesh->face[i].IsD()) continue;
+		ofs << "f"
+		    << " " << (m_pMesh->face[i].V(0)->Index() + 1)
+		    << " " << (m_pMesh->face[i].V(1)->Index() + 1)
+		    << " " << (m_pMesh->face[i].V(2)->Index() + 1) << "\n";
+	}
+
+	ofs.close();
+}
+
 void JasMeshMarkAndSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRegs)
 {
 	// Phase 1: 初始化
@@ -380,4 +460,7 @@ void JasMeshMarkAndSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRegs)
 
 		retRegs.push_back(reg);
 	}
+
+	// 调试输出：带颜色的网格
+	debugSaveColoredMesh(retRegs);
 }
