@@ -188,6 +188,69 @@ public:
         }
         return res;
     }
+
+    // 步骤 E：缝边上的新顶点 -> 把外部邻接面在加点处一分为二
+    // 注意：MergeResult 必须已声明（本方法定义在 MergeResult 之后）
+    void propagateExternal(CMeshOD* mesh, const LocalMesh& lm, const MergeResult& merge) {
+        // 对每个新顶点（local >= Nv0）：判断是否落在某条缝边上
+        for (int lv = lm.Nv0; lv < (int)lm.mesh.vert.size(); lv++) {
+            vcg::Point3d p = lm.mesh.vert[lv].P();
+            // 找它落在哪条缝边（local 顶点对）上
+            for (const auto& kv : lm.seamExternal) {
+                int la = kv.first.first, lb = kv.first.second;
+                int extG = kv.second;
+                if (mesh->face[extG].IsD()) continue;
+                vcg::Point3d pa = lm.mesh.vert[la].P();
+                vcg::Point3d pb = lm.mesh.vert[lb].P();
+                if (!pointOnSegment(p, pa, pb)) continue;
+
+                // 新顶点 global
+                int gv = (lv < (int)merge.vertLocalToGlobal.size()) ? merge.vertLocalToGlobal[lv] : -1;
+                if (gv < 0) continue;
+
+                // 外部面的三个顶点，找出缝边两端的 global 下标
+                int ga = lm.localToGlobalVert.size() > (size_t)la ? lm.localToGlobalVert[la] : -1;
+                int gb = lm.localToGlobalVert.size() > (size_t)lb ? lm.localToGlobalVert[lb] : -1;
+                splitExternalFace(mesh, extG, ga, gb, gv);
+                break;  // 该新顶点已处理
+            }
+        }
+    }
+
+    // p 是否落在线段 a-b 上：投影参数 t in [0,1] 且距离 < tolerance。
+    // 注意：VCG Point3d 的点乘是 operator*（无 .Dot 方法）。
+    static bool pointOnSegment(const vcg::Point3d& p, const vcg::Point3d& a, const vcg::Point3d& b) {
+        vcg::Point3d ab = b - a, ap = p - a;
+        double t = (ap * ab) / (ab * ab);
+        if (t < -1e-9 || t > 1 + 1e-9) return false;
+        vcg::Point3d proj = a + ab * t;
+        return (proj - p).Norm() < 1e-7;
+    }
+
+    // 把外部面 extG 沿 (ga, gb) 边在 gv 处一分为二。用下标访问，不跨 AddFace 持引用。
+    static void splitExternalFace(CMeshOD* mesh, int extG, int ga, int gb, int gv) {
+        // 先读出所需信息（AddFace 可能 realloc mesh->face，使引用失效）
+        int idx[3] = {
+            mesh->face[extG].V(0)->Index(),
+            mesh->face[extG].V(1)->Index(),
+            mesh->face[extG].V(2)->Index() };
+        int gc = -1;
+        for (int j = 0; j < 3; j++) if (idx[j] != ga && idx[j] != gb) gc = idx[j];
+        int imark = mesh->face[extG].IMark();
+        if (gc < 0) return;
+
+        // 新面 A: (ga, gv, gc)
+        vcg::tri::Allocator<CMeshOD>::AddFace(*mesh, &mesh->vert[ga], &mesh->vert[gv], &mesh->vert[gc]);
+        mesh->face.back().IMark() = imark;
+        // 新面 B: (gv, gb, gc)
+        vcg::tri::Allocator<CMeshOD>::AddFace(*mesh, &mesh->vert[gv], &mesh->vert[gb], &mesh->vert[gc]);
+        mesh->face.back().IMark() = imark;
+        // 原 extG 标记删除（按下标，安全）
+        mesh->face[extG].SetD();
+    }
+
+    // （后续 Task 实现）
+    // cutRegion(...)
 };
 
 inline LocalMeshCutManager::LocalMesh LocalMeshCutManager::extractLocalMesh(

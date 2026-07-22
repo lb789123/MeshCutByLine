@@ -1150,6 +1150,48 @@ void testMarkCutEdges() {
     std::cout << "testMarkCutEdges passed" << std::endl;
 }
 
+void testPropagateExternal() {
+    // curFaces=face0，外部邻接面=face1 共享边 (v0,v2)；新顶点落该边
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
+    mesh.vert[0].P() = Point3m(0,0,0);
+    mesh.vert[1].P() = Point3m(1,0,0);
+    mesh.vert[2].P() = Point3m(0,1,0);
+    mesh.vert[3].P() = Point3m(-1,1,0);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]); // face0 区域内
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[2], &mesh.vert[3]); // face1 外部，共享 (v0,v2)
+    mesh.face.EnableFFAdjacency();
+    // OCF: splitExternalFace 会读写 IMark()（新面继承外部面 mark）；
+    // 未 EnableMark 会读未分配存储 -> UB。与 testExtractLocalMesh/testMergeBack 对齐。
+    mesh.face.EnableMark();
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+
+    MeshCutByMark::LocalMeshCutManager mgr;
+    auto lm = mgr.extractLocalMesh(&mesh, {0});
+    // 在 local 边 (v0_local, v2_local) 中点加新顶点
+    vcg::tri::Allocator<CMeshOD>::AddVertices(lm.mesh, 1);
+    int nv = (int)lm.mesh.vert.size() - 1;
+    lm.mesh.vert[nv].P() = vcg::Point3d(0, 0.5, 0);  // (v0,v2) 中点
+    // local v0=0, v2=2；缝边 key = minmax(0,2)
+    assert(lm.seamExternal.count({0,2}) == 1);  // 抓到了外部面 face1
+
+    // 手工 merge：local 原顶点 0,1,2 -> global 0,1,2；新顶点(local 3) -> global 4
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 1);
+    mesh.vert[4].P() = vcg::Point3d(0, 0.5, 0);
+    MeshCutByMark::LocalMeshCutManager::MergeResult mr;
+    mr.vertLocalToGlobal = {0, 1, 2, 4};
+
+    mgr.propagateExternal(&mesh, lm, mr);
+
+    // 外部面 face1 被 SetD，且新增了把 face1 分成两块的面
+    assert(mesh.face[1].IsD());
+    int newExt = 0;
+    for (int i = 2; i < (int)mesh.face.size(); i++)
+        if (!mesh.face[i].IsD()) newExt++;
+    assert(newExt == 2);  // 原外部面一分为二
+    std::cout << "testPropagateExternal passed" << std::endl;
+}
+
 int main() {
     testEdgeHash();
     testBuildEdgeInfo();
@@ -1177,5 +1219,6 @@ int main() {
     testMergeBack();
     testMergeBackSharedEdge();
     testMarkCutEdges();
+    testPropagateExternal();
     return 0;
 }
