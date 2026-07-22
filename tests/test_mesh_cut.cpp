@@ -599,6 +599,8 @@ void testBuildCutInput() {
     mesh.vert[2].P() = Point3m(0,1,0);
     vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
     vcg::tri::UpdateNormal<CMeshOD>::PerFace(mesh);
+    mesh.face.EnableFFAdjacency();
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
 
     MeshCutByMark::LocalMeshCutManager mgr;
     std::vector<int> curFaces = {0};

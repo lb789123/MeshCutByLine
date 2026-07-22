@@ -127,23 +127,20 @@ inline LocalMeshCutManager::LocalMesh LocalMeshCutManager::extractLocalMesh(
     }
 
     // 5) 抓边界缝：curFaces 边在原 mesh 里 FFp 指向 curFaces 外部的，记外部面
-    //    FF 未启用时跳过（非 const FFp 在 OCF 未启用时为 UB；无 FF 无法判断外部邻接）
     std::set<int> inCur(curFaces.begin(), curFaces.end());
-    if (mesh->face.IsFFAdjacencyEnabled()) {
-        for (int gf : curFaces) {
-            for (int j = 0; j < 3; j++) {
-                CFaceOD* adj = mesh->face[gf].FFp(j);
-                if (adj == nullptr) continue;
-                int adjIdx = static_cast<int>(adj - &mesh->face[0]);
-                if (adjIdx < 0 || adjIdx == gf) continue;
-                if (inCur.count(adjIdx)) continue;  // 内部边，非缝
-                // 这是缝边：记录 local 顶点对 -> 外部面
-                int ga = mesh->face[gf].V(j)->Index();
-                int gb = mesh->face[gf].V((j+1)%3)->Index();
-                int la = globalToLocal[ga], lb = globalToLocal[gb];
-                auto key = std::minmax(la, lb);
-                lm.seamExternal[{key.first, key.second}] = adjIdx;
-            }
+    for (int gf : curFaces) {
+        for (int j = 0; j < 3; j++) {
+            CFaceOD* adj = mesh->face[gf].FFp(j);
+            if (adj == nullptr) continue;
+            int adjIdx = static_cast<int>(adj - &mesh->face[0]);
+            if (adjIdx < 0 || adjIdx == gf) continue;
+            if (inCur.count(adjIdx)) continue;  // 内部边，非缝
+            // 这是缝边：记录 local 顶点对 -> 外部面
+            int ga = mesh->face[gf].V(j)->Index();
+            int gb = mesh->face[gf].V((j+1)%3)->Index();
+            int la = globalToLocal[ga], lb = globalToLocal[gb];
+            auto key = std::minmax(la, lb);
+            lm.seamExternal[{key.first, key.second}] = adjIdx;
         }
     }
 
