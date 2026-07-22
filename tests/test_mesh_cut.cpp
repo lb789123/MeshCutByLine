@@ -447,7 +447,7 @@ void testSignedDistanceAndIntersection() {
     MeshCutByMark::CutPlaneManager cutPlaneManager;
 
     // Use the private methods indirectly through the public interface
-    // We test via makeCutPlane which internally uses signedDistance
+    // signedDistance/intersectSegmentPlane are private; we exercise the public makeCutPlane here
 
     // Create a minimal mesh and polyline for the test
     CMeshOD mesh;

@@ -44,7 +44,7 @@ Output: vector of `splitReg` structs containing original mark, new mark, triangl
 
 - C++17 standard
 - MSVC-specific: `/utf-8` flag for source files containing Chinese characters
-- No test framework — tests use raw `assert` in `tests/test_mesh_cut.cpp` (21 tests)
+- No test framework — tests use raw `assert` in `tests/test_mesh_cut.cpp` (30 tests)
 - VCGlib dependency is vendored (includes Eigen)
 
 ## Known Limitations
