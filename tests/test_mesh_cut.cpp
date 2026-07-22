@@ -625,6 +625,48 @@ void testBuildCutInput() {
     std::cout << "testBuildCutInput passed" << std::endl;
 }
 
+void testMergeBack() {
+    // 主网格：1 个三角形 (v0,v1,v2)
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 3);
+    mesh.vert[0].P() = Point3m(0,0,0);
+    mesh.vert[1].P() = Point3m(1,0,0);
+    mesh.vert[2].P() = Point3m(0,1,0);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    // OCF enables: extractLocalMesh 内会跑 FFp seam 循环，且下面要写 IMark()；
+    // 未 enable 会触发 UB（空 OCF 向量）。与 testExtractLocalMesh 对齐。
+    // 必须在 IMark()=5 之前 enable，否则写入未分配存储。
+    mesh.face.EnableFFAdjacency();
+    mesh.face.EnableMark();
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+    mesh.face[0].IMark() = 5;
+
+    MeshCutByMark::LocalMeshCutManager mgr;
+    auto lm = mgr.extractLocalMesh(&mesh, {0});
+    // 模拟 cutter：把 local 面0 分裂——在边 (v0,v1) 中点加新顶点 nv，
+    // 用面 (v0,nv,v2) 替换 face0，加面 (nv,v1,v2)。无需写来源属性。
+    vcg::tri::Allocator<CMeshOD>::AddVertices(lm.mesh, 1);
+    int nv = (int)lm.mesh.vert.size() - 1;  // 新顶点 local 下标 (>= Nv0)
+    lm.mesh.vert[nv].P() = vcg::Point3d(0.5, 0, 0);
+    lm.mesh.face[0].V(1) = &lm.mesh.vert[nv];          // face0 改成 (v0,nv,v2)
+    vcg::tri::Allocator<CMeshOD>::AddFace(lm.mesh,
+        &lm.mesh.vert[nv], &lm.mesh.vert[1], &lm.mesh.vert[2]);  // 新面 (nv,v1,v2)
+
+    auto res = mgr.mergeBack(&mesh, lm, /*targetMark*/ 5);
+
+    // 主网格：face0 应被 SetD；新增 2 个面（face0 改写算 1 个新 + append 1 个）
+    assert(mesh.face[0].IsD());
+    // 新面继承 mark=5
+    int aliveNew = 0;
+    for (int i = 1; i < (int)mesh.face.size(); i++) {
+        if (!mesh.face[i].IsD() && mesh.face[i].IMark() == 5) aliveNew++;
+    }
+    assert(aliveNew == 2);
+    // 顶点 append 了一个新顶点
+    assert((int)mesh.vert.size() == 4);
+    std::cout << "testMergeBack passed" << std::endl;
+}
+
 void testExtractLocalMesh() {
     // 两个三角形共享边 (v1,v2)，都 mark=1
     //   v2 ---- v3
@@ -1054,5 +1096,6 @@ int main() {
     testIntegration();
     testExtractLocalMesh();
     testBuildCutInput();
+    testMergeBack();
     return 0;
 }

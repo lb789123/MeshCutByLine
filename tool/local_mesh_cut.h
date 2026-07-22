@@ -70,7 +70,82 @@ public:
     }
 
     // （后续 Task 实现）
-    // void mergeBack(...) / markCutEdges(...) / propagateExternal(...) / cutRegion(...)
+    // markCutEdges(...) / propagateExternal(...) / cutRegion(...)
+
+    // 步骤 C 的返回：merge 回主网格后给上层用的映射
+    struct MergeResult {
+        std::vector<int> newFaceGlobals;       // append 进 mesh 的新面 global 下标
+        std::vector<int> splitOriginGlobals;   // 被 SetD 的原始面 global 下标
+        std::vector<int> vertLocalToGlobal;    // localVertIdx -> globalVertIdx（含新顶点）
+    };
+
+    // 判断 local 面是否引用新顶点（local 下标 >= Nv0）
+    static bool faceHasNewVert(const LocalMesh& lm, int localFaceIdx) {
+        const CFaceOD& f = lm.mesh.face[localFaceIdx];
+        for (int j = 0; j < 3; j++) {
+            int lv = static_cast<int>(f.V(j) - &lm.mesh.vert[0]);
+            if (lv >= lm.Nv0) return true;
+        }
+        return false;
+    }
+
+    // 反推新面来自哪个原始面（直接返回 global 面下标）：
+    // 取新面里 < Nv0 的原顶点 -> global，用 globalEdgeToCurFace 查它们构成的边属于哪个 curFaces 面。
+    // 用建表时的未改动 m_pMesh 拓扑，不受 cutter 原地改写 local 面的影响。
+    static int deriveOriginGlobal(const LocalMesh& lm, int localFaceIdx) {
+        const CFaceOD& f = lm.mesh.face[localFaceIdx];
+        int origs[3], no = 0;
+        for (int j = 0; j < 3; j++) {
+            int lv = static_cast<int>(f.V(j) - &lm.mesh.vert[0]);
+            if (lv < lm.Nv0 && lv < (int)lm.localToGlobalVert.size())
+                origs[no++] = lm.localToGlobalVert[lv];
+        }
+        for (int a = 0; a < no; a++)
+            for (int b = a + 1; b < no; b++) {
+                auto it = lm.globalEdgeToCurFace.find(std::minmax(origs[a], origs[b]));
+                if (it != lm.globalEdgeToCurFace.end()) return it->second;
+            }
+        return -1;
+    }
+
+    // 步骤 C：把 cutter 切过的 local mesh merge 回主网格。
+    // 新顶点/新面 append 进 mesh；被分裂的原始面 SetD()。
+    MergeResult mergeBack(CMeshOD* mesh, LocalMesh& lm, int targetMark) {
+        MergeResult res;
+
+        // 1) append 所有新顶点（local >= Nv0）到 *mesh*，一次性批量加（避免多次 realloc）
+        int numNew = static_cast<int>(lm.mesh.vert.size()) - lm.Nv0;
+        int firstNewG = static_cast<int>(mesh->vert.size());
+        if (numNew > 0) vcg::tri::Allocator<CMeshOD>::AddVertices(*mesh, numNew);
+        res.vertLocalToGlobal = lm.localToGlobalVert;  // < Nv0 部分
+        for (int k = 0; k < numNew; k++) {
+            mesh->vert[firstNewG + k].P() = lm.mesh.vert[lm.Nv0 + k].P();
+            res.vertLocalToGlobal.push_back(firstNewG + k);
+        }
+
+        // 2) 遍历 local 面：新面（含新顶点）append，未动原始面跳过
+        for (int i = 0; i < (int)lm.mesh.face.size(); i++) {
+            if (lm.mesh.face[i].IsD()) continue;
+            if (!faceHasNewVert(lm, i)) continue;  // 未动原始面，保持
+
+            int ga = res.vertLocalToGlobal[static_cast<int>(lm.mesh.face[i].V(0) - &lm.mesh.vert[0])];
+            int gb = res.vertLocalToGlobal[static_cast<int>(lm.mesh.face[i].V(1) - &lm.mesh.vert[0])];
+            int gc = res.vertLocalToGlobal[static_cast<int>(lm.mesh.face[i].V(2) - &lm.mesh.vert[0])];
+            vcg::tri::Allocator<CMeshOD>::AddFace(
+                *mesh, &mesh->vert[ga], &mesh->vert[gb], &mesh->vert[gc]);
+            int newG = static_cast<int>(mesh->face.size()) - 1;
+            mesh->face[newG].IMark() = targetMark;
+            res.newFaceGlobals.push_back(newG);
+
+            // 反推来源 global -> SetD
+            int splitG = deriveOriginGlobal(lm, i);
+            if (splitG >= 0 && splitG < (int)mesh->face.size() && !mesh->face[splitG].IsD()) {
+                mesh->face[splitG].SetD();
+                res.splitOriginGlobals.push_back(splitG);
+            }
+        }
+        return res;
+    }
 };
 
 inline LocalMeshCutManager::LocalMesh LocalMeshCutManager::extractLocalMesh(
