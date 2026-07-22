@@ -45,15 +45,18 @@ private:
         bool forward
     );
 
-    // Connect edges of a specific type into polylines
+    // Connect edges of a specific type into polylines (undirected)
     std::vector<Polyline> connectByType(
         const std::vector<CutEdge>& cutEdges,
         const std::vector<int>& edgeIndices,
         CutEdgeType type
     );
 
-    // Remove duplicate direction NON_MANIFOLD polylines
-    void removeDuplicateDirection(std::vector<Polyline>& polylines);
+    // Connect NON_MANIFOLD edges as directed polylines (v0->v1 only)
+    std::vector<Polyline> connectDirectedByType(
+        const std::vector<CutEdge>& cutEdges,
+        const std::vector<int>& edgeIndices
+    );
 
     // Try to merge polylines with matching endpoints
     void tryMergePolylines(std::vector<Polyline>& polylines);
@@ -90,10 +93,7 @@ inline std::vector<Polyline> PolylineManager::connectEdgesToPolylines(
     // Phase 2: Connect same-type edges into polylines
     auto markDiffPolylines = connectByType(cutEdges, markDiffEdges, CUT_EDGE_MARK_DIFF);
     auto boundaryPolylines = connectByType(cutEdges, boundaryEdges, CUT_EDGE_BOUNDARY);
-    auto nonManifoldPolylines = connectByType(cutEdges, nonManifoldEdges, CUT_EDGE_NON_MANIFOLD);
-
-    // Phase 3: Remove duplicate direction NON_MANIFOLD polylines
-    removeDuplicateDirection(nonManifoldPolylines);
+    auto nonManifoldPolylines = connectDirectedByType(cutEdges, nonManifoldEdges);
 
     // Phase 4: Try to merge MARK_DIFF + BOUNDARY polylines
     std::vector<Polyline> mergedPolylines;
@@ -162,6 +162,72 @@ inline std::vector<Polyline> PolylineManager::connectByType(
     return polylines;
 }
 
+inline std::vector<Polyline> PolylineManager::connectDirectedByType(
+    const std::vector<CutEdge>& cutEdges,
+    const std::vector<int>& edgeIndices
+) {
+    std::vector<Polyline> polylines;
+
+    if (edgeIndices.empty()) return polylines;
+
+    // v0 -> edges 的有向映射
+    std::unordered_map<int, std::vector<int>> directedMap;
+    for (int idx : edgeIndices) {
+        directedMap[cutEdges[idx].v0].push_back(idx);
+    }
+
+    // 记录已使用的边（canonical key: min,max）
+    std::unordered_map<std::pair<int,int>, int, EdgeHash, EdgeEqual> useEdges;
+
+    for (int idx : edgeIndices) {
+        int lo = std::min(cutEdges[idx].v0, cutEdges[idx].v1);
+        int hi = std::max(cutEdges[idx].v0, cutEdges[idx].v1);
+        if (useEdges.find({lo, hi}) != useEdges.end()) continue;
+
+        Polyline polyline;
+        polyline.type = CUT_EDGE_NON_MANIFOLD;
+
+        // 标记这条边（两个方向）已使用
+        useEdges[{lo, hi}] = idx;
+
+        // v0 -> v1 方向
+        int startV = cutEdges[idx].v0;
+        int endV = cutEdges[idx].v1;
+        polyline.vertexIndices.push_back(startV);
+        polyline.vertexIndices.push_back(endV);
+        polyline.startFaceIdx = cutEdges[idx].faceIdx;
+        polyline.startEdgeIdx = cutEdges[idx].edgeIdx;
+        polyline.endFaceIdx = cutEdges[idx].faceIdx;
+        polyline.endEdgeIdx = cutEdges[idx].edgeIdx;
+
+        // 从 endV 继续往后找（只找 v0 == endV 的边）
+        while (true) {
+            auto it = directedMap.find(endV);
+            if (it == directedMap.end()) break;
+
+            bool found = false;
+            for (int nextIdx : it->second) {
+                int nextLo = std::min(cutEdges[nextIdx].v0, cutEdges[nextIdx].v1);
+                int nextHi = std::max(cutEdges[nextIdx].v0, cutEdges[nextIdx].v1);
+                if (useEdges.find({nextLo, nextHi}) != useEdges.end()) continue;
+
+                useEdges[{nextLo, nextHi}] = nextIdx;
+                endV = cutEdges[nextIdx].v1;
+                polyline.vertexIndices.push_back(endV);
+                polyline.endFaceIdx = cutEdges[nextIdx].faceIdx;
+                polyline.endEdgeIdx = cutEdges[nextIdx].edgeIdx;
+                found = true;
+                break;
+            }
+            if (!found) break;
+        }
+
+        polylines.push_back(polyline);
+    }
+
+    return polylines;
+}
+
 inline std::unordered_map<int, std::vector<int>> PolylineManager::buildVertexToEdgesMap(
     const std::vector<CutEdge>& cutEdges,
     const std::vector<int>& edgeIndices
@@ -216,48 +282,6 @@ inline void PolylineManager::extendPolyline(
 
         if (!found) break;
     }
-}
-
-inline void PolylineManager::removeDuplicateDirection(std::vector<Polyline>& polylines) {
-    // For NON_MANIFOLD polylines, remove duplicates that are just reversed versions
-    std::vector<bool> toRemove(polylines.size(), false);
-
-    for (int i = 0; i < (int)polylines.size(); i++) {
-        if (toRemove[i]) continue;
-        if (polylines[i].type != CUT_EDGE_NON_MANIFOLD) continue;
-
-        for (int j = i + 1; j < (int)polylines.size(); j++) {
-            if (toRemove[j]) continue;
-            if (polylines[j].type != CUT_EDGE_NON_MANIFOLD) continue;
-
-            // Check if polylines[i] and polylines[j] are reverse of each other
-            const auto& vertsI = polylines[i].vertexIndices;
-            const auto& vertsJ = polylines[j].vertexIndices;
-
-            if (vertsI.size() != vertsJ.size()) continue;
-
-            bool isReverse = true;
-            for (int k = 0; k < (int)vertsI.size(); k++) {
-                if (vertsI[k] != vertsJ[vertsJ.size() - 1 - k]) {
-                    isReverse = false;
-                    break;
-                }
-            }
-
-            if (isReverse) {
-                toRemove[j] = true;  // Mark the second one for removal
-            }
-        }
-    }
-
-    // Remove marked polylines
-    std::vector<Polyline> filtered;
-    for (int i = 0; i < (int)polylines.size(); i++) {
-        if (!toRemove[i]) {
-            filtered.push_back(polylines[i]);
-        }
-    }
-    polylines = filtered;
 }
 
 inline void PolylineManager::tryMergePolylines(std::vector<Polyline>& polylines) {
