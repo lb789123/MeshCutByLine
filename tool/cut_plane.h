@@ -18,13 +18,6 @@ public:
         CMeshOD* mesh
     );
 
-    // Cut a triangle by a plane
-    void cutTriangleByPlane(
-        int faceIdx,
-        const vcg::Plane3d& plane,
-        CMeshOD* mesh
-    );
-
     // Check if an edge separates faces with different marks
     bool isOnMarkDiffEdge(
         int faceIdx,
@@ -131,28 +124,6 @@ inline bool CutPlaneManager::isOnMarkDiffEdge(
 
     // Check if marks differ between the two faces
     return mesh->face[faceIdx].IMark() != mesh->face[adjFaceIdx].IMark();
-}
-
-inline void CutPlaneManager::cutTriangleByPlane(
-    int faceIdx,
-    const vcg::Plane3d& plane,
-    CMeshOD* mesh
-) {
-    // Compute signed distances from each vertex to the cutting plane
-    double d0 = signedDistance(mesh->face[faceIdx].V(0)->P(), plane);
-    double d1 = signedDistance(mesh->face[faceIdx].V(1)->P(), plane);
-    double d2 = signedDistance(mesh->face[faceIdx].V(2)->P(), plane);
-
-    // TODO: implement full triangle splitting logic
-    // Determine cutting pattern based on sign of (d0, d1, d2):
-    //   - All same sign: no intersection, triangle stays on one side
-    //   - One vertex on opposite side: split into 1 triangle + 1 quad (2 triangles)
-    //   - Two vertices on opposite side: split into 1 triangle + 1 quad (2 triangles)
-    //   - One vertex on plane: insert a new vertex on the opposite edge
-    // This is a placeholder for future implementation.
-    (void)d0;
-    (void)d1;
-    (void)d2;
 }
 
 } // namespace MeshCutByMark

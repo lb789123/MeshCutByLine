@@ -336,7 +336,7 @@ f v1 v2 v3
 
 ## 已知限制
 
-1. **cutTriangleByPlane 未实现**：切割平面的三角形切割逻辑是存根，边缘切割功能尚未完全实现
+1. **Phase 2.4 延长切割依赖外部 cutter**：已改为「提取局部 mesh → 外部 cutter → 合并回主网格」管线（真实 cutter `JasMeshAddCutLines::AddCutLines` 外部提供，不在本仓实现）；测试用桩 cutter 验证 plumbing
 2. **单边界环**：只存储第一个边界环，多孔区域会丢失信息
 3. **流形假设**：边界遍历假设网格是流形的
 
@@ -344,7 +344,7 @@ f v1 v2 v3
 
 ## 未来改进
 
-- [ ] 实现 `cutTriangleByPlane` 的实际切割逻辑
+- [x] Phase 2.4 延长切割：已改为局部 mesh + 外部 cutter 管线（plumbing 完成并通过桩验证；接入真实 cutter 属外部工作）
 - [ ] 支持多孔区域的边界提取
 - [ ] 添加非流形网格的处理
 - [ ] 优化性能（O(n²) 前插入 → O(n)）
