@@ -1192,6 +1192,34 @@ void testPropagateExternal() {
     std::cout << "testPropagateExternal passed" << std::endl;
 }
 
+void testGrowNewMark() {
+    MeshCutByMark::RegionMarker rm;
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 3);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    rm.initNewMark(&mesh);          // m_newMark = {0}
+    rm.setNewMark(0, 7);
+    rm.growNewMark(3);              // 扩到 3
+    assert(rm.getNewMark(0) == 7);  // 已有不重置
+    assert(rm.getNewMark(1) == 0);  // 新增为 0
+    assert(rm.getNewMark(2) == 0);
+    std::cout << "testGrowNewMark passed" << std::endl;
+}
+
+void testRebuildCurFaces() {
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 3);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]); // face1 新
+    mesh.face[0].SetD();
+    std::vector<int> curFaces = {0};
+    MeshCutByMark::LocalMeshCutManager::MergeResult mr;
+    mr.newFaceGlobals = {1};
+    MeshCutByMark::LocalMeshCutManager::rebuildCurFaces(curFaces, &mesh, mr);
+    assert(curFaces.size() == 1 && curFaces[0] == 1);
+    std::cout << "testRebuildCurFaces passed" << std::endl;
+}
+
 int main() {
     testEdgeHash();
     testBuildEdgeInfo();
@@ -1220,5 +1248,7 @@ int main() {
     testMergeBackSharedEdge();
     testMarkCutEdges();
     testPropagateExternal();
+    testGrowNewMark();
+    testRebuildCurFaces();
     return 0;
 }

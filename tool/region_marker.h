@@ -43,6 +43,9 @@ public:
     // Set newMark value for a specific face
     void setNewMark(int faceIdx, int value);
 
+    // 扩容 m_newMark 到 newSize，新增元素置 0（不重置已有）
+    void growNewMark(size_t newSize);
+
 private:
     // Check if an edge is a cut edge (boundary edge with no valid FF adjacency neighbor)
     bool isCutEdge(int faceIdx, int edgeIdx, CMeshOD* mesh);
@@ -66,6 +69,10 @@ inline int RegionMarker::getNewMark(int faceIdx) const {
 inline void RegionMarker::setNewMark(int faceIdx, int value) {
     if (faceIdx >= 0 && faceIdx < (int)m_newMark.size())
         m_newMark[faceIdx] = value;
+}
+
+inline void RegionMarker::growNewMark(size_t newSize) {
+    if (newSize > m_newMark.size()) m_newMark.resize(newSize, 0);
 }
 
 inline bool RegionMarker::isCutEdge(int faceIdx, int edgeIdx, CMeshOD* mesh) {

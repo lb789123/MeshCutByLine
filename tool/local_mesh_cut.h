@@ -12,6 +12,8 @@
 #include "polyline.h"
 #include "region_marker.h"
 #include "cut_mesh.h"
+#include <vcg/complex/algorithms/update/topology.h>
+#include <vcg/complex/algorithms/update/normal.h>
 
 namespace MeshCutByMark {
 
@@ -247,6 +249,25 @@ public:
         mesh->face.back().IMark() = imark;
         // 原 extG 标记删除（按下标，安全）
         mesh->face[extG].SetD();
+    }
+
+    // 步骤 F：resize m_newMark、重建 curFaces、重算 FF。在 D 之前调用 FF，D 之后不改拓扑。
+    // 注意调用顺序：cutRegion 里先 finalizeTopology（重算 FF）→ 再 markCutEdges。
+    void finalizeGrow(RegionMarker& regionMarker, CMeshOD* mesh) {
+        regionMarker.growNewMark(mesh->face.size());
+        vcg::tri::UpdateTopology<CMeshOD>::FaceFace(*mesh);
+        vcg::tri::UpdateNormal<CMeshOD>::PerFace(*mesh);
+    }
+
+    // 重建 curFaces：移除 SetD 原始面，加入新面
+    static void rebuildCurFaces(std::vector<int>& curFaces, CMeshOD* mesh,
+                                const MergeResult& merge) {
+        std::vector<int> out;
+        for (int gf : curFaces) {
+            if (gf < (int)mesh->face.size() && !mesh->face[gf].IsD()) out.push_back(gf);
+        }
+        for (int nf : merge.newFaceGlobals) out.push_back(nf);
+        curFaces = out;
     }
 
     // （后续 Task 实现）
