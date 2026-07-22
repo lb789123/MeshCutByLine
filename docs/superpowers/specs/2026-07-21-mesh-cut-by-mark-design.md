@@ -827,7 +827,58 @@ for (int i = 0; i < mesh.face.size(); i++) {
 
 ---
 
-## 9. 测试计划
+## 9. 调试输出
+
+### 9.1 设计目标
+
+算法执行过程中产生大量中间数据（连通区域、折线、子区域、边界多边形），需要可视化这些中间结果来验证算法正确性。
+
+### 9.2 接口设计
+
+```cpp
+class JasMeshMarkAndSplit {
+public:
+    void SetDebug(bool enable);                      // 开关调试输出
+    void SetDebugOutputDir(const std::string& dir);  // 设置输出目录
+private:
+    bool m_debug = false;
+    std::string m_debugOutputDir = "debug_output/";
+    int m_debugIterCounter = 0;
+};
+```
+
+### 9.3 输出文件
+
+| 文件 | 格式 | 内容 | 输出位置 |
+|------|------|------|----------|
+| `iter_N_cur_faces.off` | OFF | flood-fill 连通区域 | Phase 2 步骤 2.1 后 |
+| `iter_N_polylines.obj` | OBJ (l) | 折线 | Phase 2 步骤 2.3 后 |
+| `iter_N_sub_region_J.off` | OFF | 子区域 | Phase 2 步骤 2.5 后 |
+| `final_polygons.obj` | OBJ (f) | 边界多边形 | Phase 3 |
+| `colored_mesh.obj` | OBJ | 带颜色网格 | Phase 3 |
+
+### 9.4 颜色管理
+
+使用 `std::map<int, vcg::Color4b>` 管理区域颜色映射：
+- key：retRegs 数组索引
+- value：随机生成的 RGBA 颜色
+
+面颜色通过 VCGlib 的 `EnableColor()` 启用，输出时转换为顶点颜色（取相邻面颜色平均值）。
+
+### 9.5 辅助方法
+
+```cpp
+void debugEnsureDir();                                              // 创建输出目录
+void debugWritePolylines(int iterIdx, const vector<Polyline>&);    // 输出折线 OBJ
+void debugWriteFacesOFF(int iterIdx, const char* suffix, const vector<int>&);  // 输出三角形 OFF
+void debugWriteSubRegionsOFF(int iterIdx, const vector<vector<int>>&);         // 输出子区域 OFF
+void debugWritePolygonsOBJ(const map<int, vector<int>>&);          // 输出多边形 OBJ
+void debugSaveColoredMesh(const vector<splitReg>&);                // 输出带颜色网格
+```
+
+---
+
+## 10. 测试计划
 
 ### 9.1 单元测试
 
@@ -844,7 +895,7 @@ for (int i = 0; i < mesh.face.size(); i++) {
 
 ---
 
-## 10. 已确认事项
+## 11. 已确认事项
 
 1. **mark 的来源**：mark 由外部定义，本模块只读取，不负责计算。
 2. **多边形方向**：输出多边形的边以 mesh 中提取的边的方向为准。`std::vector<int>` 存储的是 curFaces 切割后得到的边的顶点索引。最终多边形方向与原始输入 mesh face 的方向一致。
