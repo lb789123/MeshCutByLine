@@ -591,6 +591,38 @@ void testFloodFillBoundary() {
     std::cout << "testFloodFillBoundary passed" << std::endl;
 }
 
+void testBuildCutInput() {
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 3);
+    mesh.vert[0].P() = Point3m(0,0,0);
+    mesh.vert[1].P() = Point3m(1,0,0);
+    mesh.vert[2].P() = Point3m(0,1,0);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::UpdateNormal<CMeshOD>::PerFace(mesh);
+
+    MeshCutByMark::LocalMeshCutManager mgr;
+    std::vector<int> curFaces = {0};
+    auto lm = mgr.extractLocalMesh(&mesh, curFaces);
+
+    // 折线 0->1，端点 v0 悬空
+    MeshCutByMark::Polyline pl;
+    pl.vertexIndices = {0, 1};
+    pl.startFaceIdx = 0; pl.startEdgeIdx = 0;
+    pl.endFaceIdx = 0; pl.endEdgeIdx = 0;
+
+    auto ci = mgr.buildCutInput(pl, true, lm, &mesh);
+    assert(ci.line.size() == 2);
+    // 第一点 = 端点 v0
+    assert((ci.line[0] - mesh.vert[0].P()).Norm() < 1e-9);
+    // 方向 v0-v1 归一化
+    vcg::Point3d D = (mesh.vert[0].P() - mesh.vert[1].P()); D.Normalize();
+    vcg::Point3d seg = ci.line[1] - ci.line[0]; seg.Normalize();
+    assert((seg - D).Norm() < 1e-9);
+    // normal = 面法向 (0,0,1)
+    assert(std::abs(ci.normal.Z() - 1.0) < 1e-9);
+    std::cout << "testBuildCutInput passed" << std::endl;
+}
+
 void testExtractLocalMesh() {
     // 两个三角形共享边 (v1,v2)，都 mark=1
     //   v2 ---- v3
@@ -1019,5 +1051,6 @@ int main() {
     testSplitMeshByMarkAndEdgeSameMark();
     testIntegration();
     testExtractLocalMesh();
+    testBuildCutInput();
     return 0;
 }

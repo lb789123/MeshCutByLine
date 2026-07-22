@@ -32,8 +32,45 @@ public:
     // 步骤 A：从 m_pMesh 的 curFaces 提取局部 mesh
     LocalMesh extractLocalMesh(CMeshOD* mesh, const std::vector<int>& curFaces);
 
+    struct CutInput {
+        std::vector<vcg::Point3d> line;
+        vcg::Point3d normal;
+    };
+
+    // 步骤 B：构造延长段 line + 区域 normal
+    CutInput buildCutInput(const Polyline& polyline, bool isStart,
+                           const LocalMesh& lm, CMeshOD* mesh) {
+        CutInput ci;
+        const auto& vi = polyline.vertexIndices;
+        int endpointIdx = isStart ? vi.front() : vi.back();
+
+        vcg::Point3d P = mesh->vert[endpointIdx].P();
+        vcg::Point3d D;
+        if (isStart) {
+            D = mesh->vert[vi[0]].P() - mesh->vert[vi[1]].P();
+        } else {
+            int n = (int)vi.size();
+            D = mesh->vert[vi[n-1]].P() - mesh->vert[vi[n-2]].P();
+        }
+        D.Normalize();
+
+        // L = localMesh 包围盒对角线
+        vcg::Box3d box;
+        for (int i = 0; i < (int)lm.mesh.vert.size(); i++) box.Add(lm.mesh.vert[i].P());
+        double L = box.Diag();
+        if (L < 1e-9) L = 1.0;
+
+        ci.line.push_back(P);
+        ci.line.push_back(P + D * L);
+
+        // normal = 区域法向（取第一个 curFaces 面法向）
+        ci.normal = mesh->face[lm.localFaceToGlobal[0]].N();
+        if (ci.normal.Norm() < 1e-9) ci.normal = vcg::Point3d(0, 0, 1);
+        return ci;
+    }
+
     // （后续 Task 实现）
-    // void buildCutInput(...) / mergeBack(...) / markCutEdges(...) / propagateExternal(...) / cutRegion(...)
+    // void mergeBack(...) / markCutEdges(...) / propagateExternal(...) / cutRegion(...)
 };
 
 inline LocalMeshCutManager::LocalMesh LocalMeshCutManager::extractLocalMesh(
@@ -90,20 +127,23 @@ inline LocalMeshCutManager::LocalMesh LocalMeshCutManager::extractLocalMesh(
     }
 
     // 5) 抓边界缝：curFaces 边在原 mesh 里 FFp 指向 curFaces 外部的，记外部面
+    //    FF 未启用时跳过（非 const FFp 在 OCF 未启用时为 UB；无 FF 无法判断外部邻接）
     std::set<int> inCur(curFaces.begin(), curFaces.end());
-    for (int gf : curFaces) {
-        for (int j = 0; j < 3; j++) {
-            CFaceOD* adj = mesh->face[gf].FFp(j);
-            if (adj == nullptr) continue;
-            int adjIdx = static_cast<int>(adj - &mesh->face[0]);
-            if (adjIdx < 0 || adjIdx == gf) continue;
-            if (inCur.count(adjIdx)) continue;  // 内部边，非缝
-            // 这是缝边：记录 local 顶点对 -> 外部面
-            int ga = mesh->face[gf].V(j)->Index();
-            int gb = mesh->face[gf].V((j+1)%3)->Index();
-            int la = globalToLocal[ga], lb = globalToLocal[gb];
-            auto key = std::minmax(la, lb);
-            lm.seamExternal[{key.first, key.second}] = adjIdx;
+    if (mesh->face.IsFFAdjacencyEnabled()) {
+        for (int gf : curFaces) {
+            for (int j = 0; j < 3; j++) {
+                CFaceOD* adj = mesh->face[gf].FFp(j);
+                if (adj == nullptr) continue;
+                int adjIdx = static_cast<int>(adj - &mesh->face[0]);
+                if (adjIdx < 0 || adjIdx == gf) continue;
+                if (inCur.count(adjIdx)) continue;  // 内部边，非缝
+                // 这是缝边：记录 local 顶点对 -> 外部面
+                int ga = mesh->face[gf].V(j)->Index();
+                int gb = mesh->face[gf].V((j+1)%3)->Index();
+                int la = globalToLocal[ga], lb = globalToLocal[gb];
+                auto key = std::minmax(la, lb);
+                lm.seamExternal[{key.first, key.second}] = adjIdx;
+            }
         }
     }
 
