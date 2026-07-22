@@ -67,8 +67,43 @@ public:
         return ci;
     }
 
+    // 步骤 D：把 cutLines 上的边标成边界（FFp 自指）
+    void markCutEdges(CMeshOD* mesh, const std::vector<std::vector<int>>& cutLines) {
+        // 收集所有要标记的 global 顶点对
+        std::set<std::pair<int,int>> edges;
+        for (const auto& cl : cutLines) {
+            for (size_t i = 0; i + 1 < cl.size(); i++) {
+                edges.insert(std::minmax(cl[i], cl[i+1]));
+            }
+        }
+        if (edges.empty()) return;
+
+        // 遍历面边，命中则两侧 FFp 自指
+        for (int f = 0; f < (int)mesh->face.size(); f++) {
+            if (mesh->face[f].IsD()) continue;
+            for (int e = 0; e < 3; e++) {
+                int a = mesh->face[f].V(e)->Index();
+                int b = mesh->face[f].V((e+1)%3)->Index();
+                if (edges.count(std::minmax(a,b))) {
+                    CFaceOD* adj = mesh->face[f].FFp(e);
+                    mesh->face[f].FFp(e) = &mesh->face[f];
+                    mesh->face[f].FFi(e) = e;
+                    if (adj != nullptr && adj != &mesh->face[f]) {
+                        // 断开对面的同一条边
+                        for (int e2 = 0; e2 < 3; e2++) {
+                            if (adj->FFp(e2) == &mesh->face[f]) {
+                                adj->FFp(e2) = adj;
+                                adj->FFi(e2) = e2;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // （后续 Task 实现）
-    // markCutEdges(...) / propagateExternal(...) / cutRegion(...)
+    // propagateExternal(...) / cutRegion(...)
 
     // 步骤 C 的返回：merge 回主网格后给上层用的映射
     struct MergeResult {

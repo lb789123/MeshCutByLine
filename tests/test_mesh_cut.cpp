@@ -1111,6 +1111,45 @@ void testIntegration() {
     std::cout << "testIntegration passed" << std::endl;
 }
 
+void testMarkCutEdges() {
+    // 两个三角形拼成四边形，中间一条边要被标成分割边
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
+    mesh.vert[0].P() = Point3m(0,0,0);
+    mesh.vert[1].P() = Point3m(1,0,0);
+    mesh.vert[2].P() = Point3m(0,1,0);
+    mesh.vert[3].P() = Point3m(1,1,0);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[3]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[3], &mesh.vert[2]);
+    mesh.face.EnableFFAdjacency();
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+
+    // cutLine: 假装顶点 0 和 3 之间的边是切割边（global 顶点 0,3）
+    std::vector<std::vector<int>> cutLines = { {0, 3} };
+    MeshCutByMark::LocalMeshCutManager mgr;
+    mgr.markCutEdges(&mesh, cutLines);
+
+    // 边 (0,3) 两侧都应 FFp 自指
+    auto checkBoundary = [&](int f, int e){
+        return mesh.face[f].FFp(e) == &mesh.face[f];
+    };
+    // 找到以 (0,3) 为边的面边，确认两侧自指
+    bool found = false;
+    for (int f = 0; f < 2; f++) {
+        for (int e = 0; e < 3; e++) {
+            int a = mesh.face[f].V(e)->Index();
+            int b = mesh.face[f].V((e+1)%3)->Index();
+            auto k = std::minmax(a,b);
+            if (k == std::minmax(0,3)) {
+                assert(checkBoundary(f, e));
+                found = true;
+            }
+        }
+    }
+    assert(found);
+    std::cout << "testMarkCutEdges passed" << std::endl;
+}
+
 int main() {
     testEdgeHash();
     testBuildEdgeInfo();
@@ -1137,5 +1176,6 @@ int main() {
     testBuildCutInput();
     testMergeBack();
     testMergeBackSharedEdge();
+    testMarkCutEdges();
     return 0;
 }
