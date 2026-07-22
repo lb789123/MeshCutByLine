@@ -22,6 +22,7 @@
 #include "tool/polyline.h"
 #include "tool/cut_plane.h"
 #include "tool/region_marker.h"
+#include "tool/local_mesh_cut.h"
 class JasMeshMarkAndCutSplit
 {
 public:
@@ -72,6 +73,7 @@ private:
 	MeshCutByMark::PolylineManager m_polylineManager; // 折线管理器
 	MeshCutByMark::CutPlaneManager m_cutPlaneManager; // 切割平面管理器
 	MeshCutByMark::RegionMarker m_regionMarker;       // 区域标记管理器
+	MeshCutByMark::LocalMeshCutManager m_localMeshCut; // 局部 mesh 切割管线
 	int m_newMarkCounter = 0;                          // 新区域标记计数器
 	std::vector<vcg::Point3i> m_edgeMarks;//对应是否是分割边
 

@@ -9,6 +9,30 @@
 #include "tool/local_mesh_cut.h"
 #include "JasMeshMarkAndCutSplit.h"
 
+// 桩 cutter（plumbing 测试用；真实 cutter 由外部提供，生产构建链接真实实现）
+// tool/cut_mesh.h（经 local_mesh_cut.h 引入）声明了 AddCutLines 但无 inline 定义，
+// 测试 TU 必须提供定义才能链接。
+void JasMeshAddCutLines::AddCutLines(CMeshOD* pMesh, vcg::Point3d& normal,
+                                     std::vector<vcg::Point3d>& line,
+                                     std::vector<int>& cutLine) {
+    // 最简：在第一个面的边 (V0,V1) 中点加一个新顶点，把该面一分为二
+    if (pMesh->face.empty() || line.size() < 2) return;
+    if (!pMesh->face.IsFFAdjacencyEnabled()) { pMesh->face.EnableFFAdjacency(); }
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(*pMesh);
+
+    CFaceOD& f0 = pMesh->face[0];
+    int a = f0.V(0)->Index(), b = f0.V(1)->Index(), c = f0.V(2)->Index();
+    int nv = (int)pMesh->vert.size();
+    vcg::tri::Allocator<CMeshOD>::AddVertices(*pMesh, 1);
+    pMesh->vert[nv].P() = (pMesh->vert[a].P() + pMesh->vert[b].P()) * 0.5;
+    // face0 改写成 (a, nv, c)
+    f0.V(1) = &pMesh->vert[nv];
+    // 新增面 (nv, b, c)
+    vcg::tri::Allocator<CMeshOD>::AddFace(*pMesh, &pMesh->vert[nv], &pMesh->vert[b], &pMesh->vert[c]);
+    cutLine = { nv };
+    (void)normal;
+}
+
 void testEdgeHash() {
     MeshCutByMark::EdgeHash hash;
     std::pair<int,int> e1 = {1, 2};
@@ -1220,6 +1244,39 @@ void testRebuildCurFaces() {
     std::cout << "testRebuildCurFaces passed" << std::endl;
 }
 
+void testCutRegionPlumbing() {
+    // 区域 2 个三角形 mark=1，构造一条 NON_MANIFOLD 折线端点悬空
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
+    mesh.vert[0].P() = Point3m(0,0,0);
+    mesh.vert[1].P() = Point3m(1,0,0);
+    mesh.vert[2].P() = Point3m(0,1,0);
+    mesh.vert[3].P() = Point3m(1,1,0);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+    mesh.face.EnableFFAdjacency(); mesh.face.EnableMark();
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+    vcg::tri::UpdateNormal<CMeshOD>::PerFace(mesh);
+    mesh.face[0].IMark() = 1; mesh.face[1].IMark() = 1;
+
+    MeshCutByMark::RegionMarker rm; rm.initNewMark(&mesh);
+    std::vector<int> curFaces = {0, 1};
+
+    MeshCutByMark::Polyline pl;
+    pl.type = MeshCutByMark::CUT_EDGE_NON_MANIFOLD;
+    pl.vertexIndices = {0, 1};
+    pl.startFaceIdx = 0; pl.startEdgeIdx = 0;
+    pl.endFaceIdx = 0;   pl.endEdgeIdx = 0;  // 端点不在 mark-diff 边 -> 触发切割
+
+    MeshCutByMark::LocalMeshCutManager mgr;
+    mgr.cutRegion(&mesh, curFaces, {pl}, /*targetMark*/1, rm);
+
+    // 桩 cutter 把 face0 一分为二：mesh.face[0] 被 SetD，新增面，curFaces 重建
+    assert(mesh.face[0].IsD());
+    assert(curFaces.size() >= 2);  // 至少含原 face1 + 新面
+    std::cout << "testCutRegionPlumbing passed" << std::endl;
+}
+
 int main() {
     testEdgeHash();
     testBuildEdgeInfo();
@@ -1250,5 +1307,6 @@ int main() {
     testPropagateExternal();
     testGrowNewMark();
     testRebuildCurFaces();
+    testCutRegionPlumbing();
     return 0;
 }

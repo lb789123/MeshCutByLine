@@ -396,35 +396,8 @@ void JasMeshMarkAndCutSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRe
 		// 调试输出：折线
 		debugWritePolylines(m_debugIterCounter, polylines);
 
-		// 2.4 从端点延长切割（只对 NON_MANIFOLD 折线进行延长）
-		for (const auto& polyline : polylines) {
-			// 只有 NON_MANIFOLD 类型的折线才需要延长切割
-			if (polyline.type != MeshCutByMark::CUT_EDGE_NON_MANIFOLD) {
-				continue;
-			}
-
-			// 检查首端点
-			if (!m_cutPlaneManager.isOnMarkDiffEdge(
-					polyline.startFaceIdx, polyline.startEdgeIdx, m_pMesh)) {
-				vcg::Plane3d plane = m_cutPlaneManager.makeCutPlane(polyline, true, m_pMesh);
-				for (int faceIdx : curFaces) {
-					if (!m_pMesh->face[faceIdx].IsD()) {
-						m_cutPlaneManager.cutTriangleByPlane(faceIdx, plane, m_pMesh);
-					}
-				}
-			}
-
-			// 检查尾端点
-			if (!m_cutPlaneManager.isOnMarkDiffEdge(
-					polyline.endFaceIdx, polyline.endEdgeIdx, m_pMesh)) {
-				vcg::Plane3d plane = m_cutPlaneManager.makeCutPlane(polyline, false, m_pMesh);
-				for (int faceIdx : curFaces) {
-					if (!m_pMesh->face[faceIdx].IsD()) {
-						m_cutPlaneManager.cutTriangleByPlane(faceIdx, plane, m_pMesh);
-					}
-				}
-			}
-		}
+		// 2.4 从端点延长切割：局部 mesh + cutter + 合并回主网格（targetMark 在上文已定义）
+		m_localMeshCut.cutRegion(m_pMesh, curFaces, polylines, targetMark, m_regionMarker);
 
 		// 2.5 通过拣选得到切割后的子区域
 		std::vector<std::vector<int>> subRegions =

@@ -12,6 +12,7 @@
 #include "polyline.h"
 #include "region_marker.h"
 #include "cut_mesh.h"
+#include "cut_plane.h"
 #include <vcg/complex/algorithms/update/topology.h>
 #include <vcg/complex/algorithms/update/normal.h>
 
@@ -103,9 +104,6 @@ public:
             }
         }
     }
-
-    // （后续 Task 实现）
-    // propagateExternal(...) / cutRegion(...)
 
     // 步骤 C 的返回：merge 回主网格后给上层用的映射
     struct MergeResult {
@@ -270,8 +268,64 @@ public:
         curFaces = out;
     }
 
-    // （后续 Task 实现）
-    // cutRegion(...)
+    // 总装：对一个区域跑 A→B→cutter→C→E→F(FF)→D→F(curFaces)
+    void cutRegion(CMeshOD* mesh,
+                   std::vector<int>& curFaces,
+                   const std::vector<Polyline>& polylines,
+                   int targetMark,
+                   RegionMarker& regionMarker)
+    {
+        LocalMesh lm = extractLocalMesh(mesh, curFaces);
+
+        // B + cutter：对每条 NON_MANIFOLD 折线的每个悬空端点。
+        // 记录端点 global 顶点 + cutLine（local 新顶点下标），merge 后转 global 并把端点拼到最前。
+        struct PendingCut { int endpointGlobal; std::vector<int> cutLineLocal; };
+        std::vector<PendingCut> pending;
+        JasMeshAddCutLines cutter;
+        MeshCutByMark::CutPlaneManager cpm;  // 复用 isOnMarkDiffEdge
+        for (const auto& pl : polylines) {
+            if (pl.type != CUT_EDGE_NON_MANIFOLD) continue;
+            if (!cpm.isOnMarkDiffEdge(pl.startFaceIdx, pl.startEdgeIdx, mesh)) {
+                auto ci = buildCutInput(pl, true, lm, mesh);
+                std::vector<int> cl;
+                cutter.AddCutLines(&lm.mesh, ci.normal, ci.line, cl);
+                if (!cl.empty()) pending.push_back({pl.vertexIndices.front(), cl});
+            }
+            if (!cpm.isOnMarkDiffEdge(pl.endFaceIdx, pl.endEdgeIdx, mesh)) {
+                auto ci = buildCutInput(pl, false, lm, mesh);
+                std::vector<int> cl;
+                cutter.AddCutLines(&lm.mesh, ci.normal, ci.line, cl);
+                if (!cl.empty()) pending.push_back({pl.vertexIndices.back(), cl});
+            }
+        }
+
+        // C：merge 回主网格（新顶点此时 append 进 mesh，得到 vertLocalToGlobal）
+        MergeResult merge = mergeBack(mesh, lm, targetMark);
+
+        // cutLines：端点 global + 新顶点 global，拼成完整切割路径（spec D.1）
+        std::vector<std::vector<int>> cutLines;
+        for (const auto& pc : pending) {
+            std::vector<int> g;
+            g.push_back(pc.endpointGlobal);  // 端点（原顶点，global）
+            for (int lv : pc.cutLineLocal) {
+                if (lv >= 0 && lv < (int)merge.vertLocalToGlobal.size())
+                    g.push_back(merge.vertLocalToGlobal[lv]);
+            }
+            if (g.size() >= 2) cutLines.push_back(g);
+        }
+
+        // E：外部加点（在重算 FF 之前）
+        propagateExternal(mesh, lm, merge);
+
+        // F1：resize m_newMark + 重算 FF/normal
+        finalizeGrow(regionMarker, mesh);
+
+        // D：标分割边（cutLines 已是 global 顶点）
+        markCutEdges(mesh, cutLines);
+
+        // F2：重建 curFaces
+        rebuildCurFaces(curFaces, mesh, merge);
+    }
 };
 
 inline LocalMeshCutManager::LocalMesh LocalMeshCutManager::extractLocalMesh(
