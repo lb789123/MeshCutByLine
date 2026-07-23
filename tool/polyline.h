@@ -148,6 +148,17 @@ namespace MeshCutByMark
                 if (useEdges.find(re) != useEdges.end())
                     continue;
                 useEdges[e] = idx;
+
+                for (int i = 0; i < cutEdges.size(); ++i)
+                {
+                    std::pair<int, int> e = {cutEdges[i].v0, cutEdges[i].v1};
+                    std::pair<int, int> re = {cutEdges[i].v1, cutEdges[i].v0};
+
+                    if (useEdges.find(re) != useEdges.end())
+                        used[i] = true;
+                    if (useEdges.find(e) != useEdges.end())
+                        used[i] = true;
+                }
             }
 
             Polyline polyline;
