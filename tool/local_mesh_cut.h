@@ -355,10 +355,15 @@ inline LocalMeshCutManager::LocalMesh LocalMeshCutManager::extractLocalMesh(
         lm.mesh.vert[li].P() = mesh->vert[lm.localToGlobalVert[li]].P();
     }
 
-    // 3) AddFace（顶点引用重映射）
-    //    IMark 拷贝需两端 OCF mark 均已 Enable，否则访问空 MV 为 UB；
-    //    此处采用 VCG 自带 ImportData 的守卫习惯（component_ocf.h MarkOcf::ImportData）。
-    for (int gf : curFaces) {
+	// 3) AddFace（顶点引用重映射）
+	//    IMark 拷贝需两端 OCF mark 均已 Enable，否则访问空 MV 为 UB；
+	//    此处采用 VCG 自带 ImportData 的守卫习惯（component_ocf.h MarkOcf::ImportData）。
+	if (!lm.mesh.face.IsMarkEnabled()) lm.mesh.face.EnableMark();
+	if (!lm.mesh.face.IsFFAdjacencyEnabled()) lm.mesh.face.EnableFFAdjacency();
+	if (!lm.mesh.face.IsVFAdjacencyEnabled()) lm.mesh.face.EnableVFAdjacency();
+	if (!lm.mesh.vert.IsVFAdjacencyEnabled()) lm.mesh.vert.EnableVFAdjacency();
+	if (!lm.mesh.vert.IsMarkEnabled()) lm.mesh.vert.EnableMark();
+	for (int gf : curFaces) {
         int la = globalToLocal[mesh->face[gf].V(0)->Index()];
         int lb = globalToLocal[mesh->face[gf].V(1)->Index()];
         int lc = globalToLocal[mesh->face[gf].V(2)->Index()];

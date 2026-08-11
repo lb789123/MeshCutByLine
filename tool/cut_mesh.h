@@ -1,22 +1,8 @@
-#include "cmesh.h"
-#include <vector>
-#include <string>
-#include <map>
+#ifndef CUT_MESH_H
+#define CUT_MESH_H
 
-class JasMeshAddCutLines
-{
+// 真实 cutter 由外部库 cgalLocalMeshCut 提供（external/cgalLocalMeshCut
+// submodule），契约见 JasMeshAddCutLines.h。
+#include "JasMeshAddCutLines.h"
 
-public:
-    JasMeshAddCutLines();
-    ~JasMeshAddCutLines();
-
-    void AddCutLines(CMeshOD *pMesh,vcg::Point3d &normal,std::vector<vcg::Point3d> &line,std::vector<int> &cutLine);
-};
-
-inline JasMeshAddCutLines::JasMeshAddCutLines(/* args */)
-{
-}
-
-inline JasMeshAddCutLines::~JasMeshAddCutLines()
-{
-}
+#endif  // CUT_MESH_H

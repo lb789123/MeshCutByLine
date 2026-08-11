@@ -34,6 +34,7 @@ public:
 		std::vector<int> inTris;     // 包含的三角形索引
 		vcg::Point3d normal;         // 法向量
 		std::vector<int> boundlines; // 边界边的顶点索引序列
+		std::vector<std::vector<int>> boundaries; // 全部边界环（第 0 圈外圈，其余为洞）
 	};
 
 	JasMeshMarkAndCutSplit();

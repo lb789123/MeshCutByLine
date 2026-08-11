@@ -1,4 +1,5 @@
 #include "JasMeshMarkAndCutSplit.h"
+#include "JasMeshMarkAndCutSplitInternal.h"
 #include <vcg/complex/algorithms/update/topology.h>
 #include <vcg/complex/algorithms/update/normal.h>
 #include <filesystem>
@@ -425,8 +426,9 @@ void JasMeshMarkAndCutSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRe
 
 	// 输出结果
 	for (const auto& [newMark, faces] : markToFaces) {
-		// 提取边界边
-		std::vector<std::vector<int>> boundaries = extractBoundaryEdges(faces);
+		// 提取边界环（外圈 + 洞），由外部库 cgalLocalMeshCut 提供
+		std::vector<std::vector<int>> boundaries =
+			jaslmc::SubRegionBoundary(*m_pMesh, faces);
 
 		// 构造 splitReg
 		splitReg reg;
@@ -435,6 +437,7 @@ void JasMeshMarkAndCutSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRe
 		reg.inTris = faces;
 		reg.normal = m_pMesh->face[faces[0]].N();
 		reg.boundlines = boundaries.empty() ? std::vector<int>() : boundaries[0];
+		reg.boundaries = boundaries;
 
 		retRegs.push_back(reg);
 	}
