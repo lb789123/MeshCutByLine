@@ -607,7 +607,8 @@ void testBuildCutInput() {
 
     MeshCutByMark::LocalMeshCutManager mgr;
     std::vector<int> curFaces = {0};
-    auto lm = mgr.extractLocalMesh(&mesh, curFaces);
+    MeshCutByMark::LocalMeshCutManager::LocalMesh lm;
+    mgr.extractLocalMesh(&mesh, curFaces, lm);
 
     // 折线 0->1，端点 v0 悬空
     MeshCutByMark::Polyline pl;
@@ -645,7 +646,8 @@ void testMergeBack() {
     mesh.face[0].IMark() = 5;
 
     MeshCutByMark::LocalMeshCutManager mgr;
-    auto lm = mgr.extractLocalMesh(&mesh, {0});
+    MeshCutByMark::LocalMeshCutManager::LocalMesh lm;
+    mgr.extractLocalMesh(&mesh, {0}, lm);
     // 模拟 cutter：把 local 面0 分裂——在边 (v0,v1) 中点加新顶点 nv，
     // 用面 (v0,nv,v2) 替换 face0，加面 (nv,v1,v2)。无需写来源属性。
     vcg::tri::Allocator<CMeshOD>::AddVertices(lm.mesh, 1);
@@ -693,7 +695,8 @@ void testMergeBackSharedEdge() {
     mesh.face[1].IMark() = 5;
 
     MeshCutByMark::LocalMeshCutManager mgr;
-    auto lm = mgr.extractLocalMesh(&mesh, {0, 1});
+    MeshCutByMark::LocalMeshCutManager::LocalMesh lm;
+    mgr.extractLocalMesh(&mesh, {0, 1}, lm);
     // 模拟 cutter 只切 face0：在 face0 的边 (v0,v1) 中点加 nv，
     // face0 改成 (v0,nv,v2)，加 (nv,v1,v2)。注意 (nv,v1,v2) 的完整边是 (v1,v2)=共享边。
     vcg::tri::Allocator<CMeshOD>::AddVertices(lm.mesh, 1);
@@ -730,7 +733,8 @@ void testExtractLocalMesh() {
 
     std::vector<int> curFaces = {0, 1};
     MeshCutByMark::LocalMeshCutManager mgr;
-    auto lm = mgr.extractLocalMesh(&mesh, curFaces);
+    MeshCutByMark::LocalMeshCutManager::LocalMesh lm;
+    mgr.extractLocalMesh(&mesh, curFaces, lm);
 
     assert(lm.mesh.vert.size() == 4);      // 4 unique verts
     assert(lm.mesh.face.size() == 2);      // 2 faces
@@ -1172,7 +1176,8 @@ void testPropagateExternal() {
     vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
 
     MeshCutByMark::LocalMeshCutManager mgr;
-    auto lm = mgr.extractLocalMesh(&mesh, {0});
+    MeshCutByMark::LocalMeshCutManager::LocalMesh lm;
+    mgr.extractLocalMesh(&mesh, {0}, lm);
     // 在 local 边 (v0_local, v2_local) 中点加新顶点
     vcg::tri::Allocator<CMeshOD>::AddVertices(lm.mesh, 1);
     int nv = (int)lm.mesh.vert.size() - 1;

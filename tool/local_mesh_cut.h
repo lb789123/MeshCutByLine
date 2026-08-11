@@ -34,7 +34,9 @@ namespace MeshCutByMark
         };
 
         // 步骤 A：从 m_pMesh 的 curFaces 提取局部 mesh
-        LocalMesh extractLocalMesh(CMeshOD *mesh, const std::vector<int> &curFaces);
+        // 提取局部 mesh：结果写入输出参数 localMesh，避免返回结构体造成拷贝。
+        void extractLocalMesh(CMeshOD *mesh, const std::vector<int> &curFaces,
+                              LocalMesh &localMesh);
 
         struct CutInput
         {
@@ -374,7 +376,8 @@ namespace MeshCutByMark
             RegionMarker &regionMarker)
         {
             // Cut one region: extract, cut dangling NON_MANIFOLD ends, merge back and finalize topology
-            LocalMesh localMesh = extractLocalMesh(mesh, curFaces);
+            LocalMesh localMesh;
+            extractLocalMesh(mesh, curFaces, localMesh);
 
             // B + cutter：对每条 NON_MANIFOLD 折线的每个悬空端点。
             // 记录端点 global 顶点 + cutLine（local 新顶点下标），merge 后转 global 并把端点拼到最前。
@@ -450,13 +453,18 @@ namespace MeshCutByMark
         }
     };
 
-    inline LocalMeshCutManager::LocalMesh LocalMeshCutManager::extractLocalMesh(
+    inline void LocalMeshCutManager::extractLocalMesh(
         CMeshOD *mesh,
-        const std::vector<int> &curFaces)
+        const std::vector<int> &curFaces,
+        LocalMesh &localMesh)
     {
         // Extract a local copy of the region's faces plus boundary-seam info
-        LocalMesh localMesh;
+        // 重置输出结构，避免上次调用残留。
+        localMesh.mesh.Clear();
         localMesh.localToGlobalVert.clear();
+        localMesh.localFaceToGlobal.clear();
+        localMesh.seamExternal.clear();
+        localMesh.Nv0 = 0;
         localMesh.localFaceToGlobal = curFaces; // local face i <-> global curFaces[i]
 
         // 1) 收集去重顶点，建映射
@@ -551,7 +559,7 @@ namespace MeshCutByMark
             }
         }
 
-        return localMesh;
+        return;
     }
 
 } // namespace MeshCutByMark
