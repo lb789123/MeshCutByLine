@@ -1199,6 +1199,59 @@ void testPropagateExternal() {
     for (int i = 2; i < (int)mesh.face.size(); i++)
         if (!mesh.face[i].IsD()) newExt++;
     assert(newExt == 2);  // 原外部面一分为二
+
+    // 回归：新面必须保持原外部面 (0,2,3) 的绕序（法向 +Z）
+    for (int faceIndex = 2; faceIndex < (int)mesh.face.size(); faceIndex++)
+    {
+        if (mesh.face[faceIndex].IsD())
+        {
+            continue;
+        }
+        vcg::Point3d newFaceNormal =
+            (mesh.face[faceIndex].V(1)->P() - mesh.face[faceIndex].V(0)->P()) ^
+            (mesh.face[faceIndex].V(2)->P() - mesh.face[faceIndex].V(0)->P());
+        assert(newFaceNormal.Z() > 0);
+    }
+
+    // 反绕序回归：face1 存为 (0,3,2)（原法向 -Z），两个新面仍应与原面同向
+    {
+        CMeshOD reversedMesh;
+        vcg::tri::Allocator<CMeshOD>::AddVertices(reversedMesh, 4);
+        reversedMesh.vert[0].P() = Point3m(0,0,0);
+        reversedMesh.vert[1].P() = Point3m(1,0,0);
+        reversedMesh.vert[2].P() = Point3m(0,1,0);
+        reversedMesh.vert[3].P() = Point3m(-1,1,0);
+        vcg::tri::Allocator<CMeshOD>::AddFace(reversedMesh, &reversedMesh.vert[0], &reversedMesh.vert[1], &reversedMesh.vert[2]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(reversedMesh, &reversedMesh.vert[0], &reversedMesh.vert[3], &reversedMesh.vert[2]);
+        reversedMesh.face.EnableFFAdjacency();
+        reversedMesh.face.EnableMark();
+        vcg::tri::UpdateTopology<CMeshOD>::FaceFace(reversedMesh);
+
+        MeshCutByMark::LocalMeshCutManager::LocalMesh reversedLocalMesh;
+        mgr.extractLocalMesh(&reversedMesh, {0}, reversedLocalMesh);
+        vcg::tri::Allocator<CMeshOD>::AddVertices(reversedLocalMesh.mesh, 1);
+        int reversedNewVertex = (int)reversedLocalMesh.mesh.vert.size() - 1;
+        reversedLocalMesh.mesh.vert[reversedNewVertex].P() = vcg::Point3d(0, 0.5, 0);
+        assert(reversedLocalMesh.seamExternal.count({0,2}) == 1);
+
+        vcg::tri::Allocator<CMeshOD>::AddVertices(reversedMesh, 1);
+        reversedMesh.vert[4].P() = vcg::Point3d(0, 0.5, 0);
+        MeshCutByMark::LocalMeshCutManager::MergeResult reversedMergeResult;
+        reversedMergeResult.vertLocalToGlobal = {0, 1, 2, 4};
+        mgr.propagateExternal(&reversedMesh, reversedLocalMesh, reversedMergeResult);
+
+        for (int faceIndex = 2; faceIndex < (int)reversedMesh.face.size(); faceIndex++)
+        {
+            if (reversedMesh.face[faceIndex].IsD())
+            {
+                continue;
+            }
+            vcg::Point3d newFaceNormal =
+                (reversedMesh.face[faceIndex].V(1)->P() - reversedMesh.face[faceIndex].V(0)->P()) ^
+                (reversedMesh.face[faceIndex].V(2)->P() - reversedMesh.face[faceIndex].V(0)->P());
+            assert(newFaceNormal.Z() < 0);
+        }
+    }
     std::cout << "testPropagateExternal passed" << std::endl;
 }
 

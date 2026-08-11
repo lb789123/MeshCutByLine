@@ -311,25 +311,36 @@ namespace MeshCutByMark
                 mesh->face[extG].V(0)->Index(),
                 mesh->face[extG].V(1)->Index(),
                 mesh->face[extG].V(2)->Index()};
-            int thirdVertexIndex = -1;
-            for (int vertexIndex = 0; vertexIndex < 3; vertexIndex++)
+            int originalMark = mesh->face[extG].IMark();
+
+            // 按外部面自身绕序定位缝边：V(edgeIndex) -> V(edgeIndex+1) 恰为 {ga, gb}
+            int seamEdgeIndex = -1;
+            for (int edgeIndex = 0; edgeIndex < 3; edgeIndex++)
             {
-                if (vertexIndices[vertexIndex] != ga && vertexIndices[vertexIndex] != gb)
+                int edgeVertexA = vertexIndices[edgeIndex];
+                int edgeVertexB = vertexIndices[(edgeIndex + 1) % 3];
+                if ((edgeVertexA == ga && edgeVertexB == gb) ||
+                    (edgeVertexA == gb && edgeVertexB == ga))
                 {
-                    thirdVertexIndex = vertexIndices[vertexIndex];
+                    seamEdgeIndex = edgeIndex;
+                    break;
                 }
             }
-            int originalMark = mesh->face[extG].IMark();
-            if (thirdVertexIndex < 0)
+            if (seamEdgeIndex < 0)
             {
                 return;
             }
 
-            // 新面 A: (ga, gv, gc)
-            vcg::tri::Allocator<CMeshOD>::AddFace(*mesh, &mesh->vert[ga], &mesh->vert[gv], &mesh->vert[thirdVertexIndex]);
+            // 按面的真实绕序取 a -> b -> c，gv 位于边 (a, b) 上，保证新面与原面同向
+            int windingVertexA = vertexIndices[seamEdgeIndex];
+            int windingVertexB = vertexIndices[(seamEdgeIndex + 1) % 3];
+            int thirdVertexIndex = vertexIndices[(seamEdgeIndex + 2) % 3];
+
+            // 新面 A: (a, gv, c)
+            vcg::tri::Allocator<CMeshOD>::AddFace(*mesh, &mesh->vert[windingVertexA], &mesh->vert[gv], &mesh->vert[thirdVertexIndex]);
             mesh->face.back().IMark() = originalMark;
-            // 新面 B: (gv, gb, gc)
-            vcg::tri::Allocator<CMeshOD>::AddFace(*mesh, &mesh->vert[gv], &mesh->vert[gb], &mesh->vert[thirdVertexIndex]);
+            // 新面 B: (gv, b, c)
+            vcg::tri::Allocator<CMeshOD>::AddFace(*mesh, &mesh->vert[gv], &mesh->vert[windingVertexB], &mesh->vert[thirdVertexIndex]);
             mesh->face.back().IMark() = originalMark;
             // 原 extG 标记删除（按下标，安全）
             mesh->face[extG].SetD();
