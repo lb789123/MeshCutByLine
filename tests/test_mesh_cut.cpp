@@ -6,7 +6,32 @@
 #include "tool/polyline.h"
 #include "tool/cut_plane.h"
 #include "tool/region_marker.h"
+#include "tool/local_mesh_cut.h"
 #include "JasMeshMarkAndCutSplit.h"
+
+// 桩 cutter（plumbing 测试用；真实 cutter 由外部提供，生产构建链接真实实现）
+// tool/cut_mesh.h（经 local_mesh_cut.h 引入）声明了 AddCutLines 但无 inline 定义，
+// 测试 TU 必须提供定义才能链接。
+void JasMeshAddCutLines::AddCutLines(CMeshOD* pMesh, vcg::Point3d& normal,
+                                     std::vector<vcg::Point3d>& line,
+                                     std::vector<int>& cutLine) {
+    // 最简：在第一个面的边 (V0,V1) 中点加一个新顶点，把该面一分为二
+    if (pMesh->face.empty() || line.size() < 2) return;
+    if (!pMesh->face.IsFFAdjacencyEnabled()) { pMesh->face.EnableFFAdjacency(); }
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(*pMesh);
+
+    CFaceOD& f0 = pMesh->face[0];
+    int a = f0.V(0)->Index(), b = f0.V(1)->Index(), c = f0.V(2)->Index();
+    int nv = (int)pMesh->vert.size();
+    vcg::tri::Allocator<CMeshOD>::AddVertices(*pMesh, 1);
+    pMesh->vert[nv].P() = (pMesh->vert[a].P() + pMesh->vert[b].P()) * 0.5;
+    // face0 改写成 (a, nv, c)
+    f0.V(1) = &pMesh->vert[nv];
+    // 新增面 (nv, b, c)
+    vcg::tri::Allocator<CMeshOD>::AddFace(*pMesh, &pMesh->vert[nv], &pMesh->vert[b], &pMesh->vert[c]);
+    cutLine = { nv };
+    (void)normal;
+}
 
 void testEdgeHash() {
     MeshCutByMark::EdgeHash hash;
@@ -422,7 +447,7 @@ void testSignedDistanceAndIntersection() {
     MeshCutByMark::CutPlaneManager cutPlaneManager;
 
     // Use the private methods indirectly through the public interface
-    // We test via makeCutPlane which internally uses signedDistance
+    // signedDistance/intersectSegmentPlane are private; we exercise the public makeCutPlane here
 
     // Create a minimal mesh and polyline for the test
     CMeshOD mesh;
@@ -588,6 +613,154 @@ void testFloodFillBoundary() {
     assert(result[0] == 0);
 
     std::cout << "testFloodFillBoundary passed" << std::endl;
+}
+
+void testBuildCutInput() {
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 3);
+    mesh.vert[0].P() = Point3m(0,0,0);
+    mesh.vert[1].P() = Point3m(1,0,0);
+    mesh.vert[2].P() = Point3m(0,1,0);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::UpdateNormal<CMeshOD>::PerFace(mesh);
+    mesh.face.EnableFFAdjacency();
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+
+    MeshCutByMark::LocalMeshCutManager mgr;
+    std::vector<int> curFaces = {0};
+    auto lm = mgr.extractLocalMesh(&mesh, curFaces);
+
+    // 折线 0->1，端点 v0 悬空
+    MeshCutByMark::Polyline pl;
+    pl.vertexIndices = {0, 1};
+    pl.startFaceIdx = 0; pl.startEdgeIdx = 0;
+    pl.endFaceIdx = 0; pl.endEdgeIdx = 0;
+
+    auto ci = mgr.buildCutInput(pl, true, lm, &mesh);
+    assert(ci.line.size() == 2);
+    // 第一点 = 端点 v0
+    assert((ci.line[0] - mesh.vert[0].P()).Norm() < 1e-9);
+    // 方向 v0-v1 归一化
+    vcg::Point3d D = (mesh.vert[0].P() - mesh.vert[1].P()); D.Normalize();
+    vcg::Point3d seg = ci.line[1] - ci.line[0]; seg.Normalize();
+    assert((seg - D).Norm() < 1e-9);
+    // normal = 面法向 (0,0,1)
+    assert(std::abs(ci.normal.Z() - 1.0) < 1e-9);
+    std::cout << "testBuildCutInput passed" << std::endl;
+}
+
+void testMergeBack() {
+    // 主网格：1 个三角形 (v0,v1,v2)
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 3);
+    mesh.vert[0].P() = Point3m(0,0,0);
+    mesh.vert[1].P() = Point3m(1,0,0);
+    mesh.vert[2].P() = Point3m(0,1,0);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    // OCF enables: extractLocalMesh 内会跑 FFp seam 循环，且下面要写 IMark()；
+    // 未 enable 会触发 UB（空 OCF 向量）。与 testExtractLocalMesh 对齐。
+    // 必须在 IMark()=5 之前 enable，否则写入未分配存储。
+    mesh.face.EnableFFAdjacency();
+    mesh.face.EnableMark();
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+    mesh.face[0].IMark() = 5;
+
+    MeshCutByMark::LocalMeshCutManager mgr;
+    auto lm = mgr.extractLocalMesh(&mesh, {0});
+    // 模拟 cutter：把 local 面0 分裂——在边 (v0,v1) 中点加新顶点 nv，
+    // 用面 (v0,nv,v2) 替换 face0，加面 (nv,v1,v2)。无需写来源属性。
+    vcg::tri::Allocator<CMeshOD>::AddVertices(lm.mesh, 1);
+    int nv = (int)lm.mesh.vert.size() - 1;  // 新顶点 local 下标 (>= Nv0)
+    lm.mesh.vert[nv].P() = vcg::Point3d(0.5, 0, 0);
+    lm.mesh.face[0].V(1) = &lm.mesh.vert[nv];          // face0 改成 (v0,nv,v2)
+    vcg::tri::Allocator<CMeshOD>::AddFace(lm.mesh,
+        &lm.mesh.vert[nv], &lm.mesh.vert[1], &lm.mesh.vert[2]);  // 新面 (nv,v1,v2)
+
+    auto res = mgr.mergeBack(&mesh, lm, /*targetMark*/ 5);
+
+    // 主网格：face0 应被 SetD；新增 2 个面（face0 改写算 1 个新 + append 1 个）
+    assert(mesh.face[0].IsD());
+    // 新面继承 mark=5
+    int aliveNew = 0;
+    for (int i = 1; i < (int)mesh.face.size(); i++) {
+        if (!mesh.face[i].IsD() && mesh.face[i].IMark() == 5) aliveNew++;
+    }
+    assert(aliveNew == 2);
+    // 顶点 append 了一个新顶点
+    assert((int)mesh.vert.size() == 4);
+    std::cout << "testMergeBack passed" << std::endl;
+}
+
+void testMergeBackSharedEdge() {
+    // face0=(v0,v1,v2), face1=(v1,v3,v2) 共享边 (v1,v2)。都 mark=5。
+    //   v2 ---- v3
+    //    \     |
+    //     \    |
+    //   v0 --- v1
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
+    mesh.vert[0].P() = Point3m(0,0,0);
+    mesh.vert[1].P() = Point3m(1,0,0);
+    mesh.vert[2].P() = Point3m(0,1,0);
+    mesh.vert[3].P() = Point3m(1,1,0);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]); // face0
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]); // face1
+    mesh.face.EnableFFAdjacency();
+    mesh.face.EnableMark();
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+    mesh.face[0].IMark() = 5;
+    mesh.face[1].IMark() = 5;
+
+    MeshCutByMark::LocalMeshCutManager mgr;
+    auto lm = mgr.extractLocalMesh(&mesh, {0, 1});
+    // 模拟 cutter 只切 face0：在 face0 的边 (v0,v1) 中点加 nv，
+    // face0 改成 (v0,nv,v2)，加 (nv,v1,v2)。注意 (nv,v1,v2) 的完整边是 (v1,v2)=共享边。
+    vcg::tri::Allocator<CMeshOD>::AddVertices(lm.mesh, 1);
+    int nv = (int)lm.mesh.vert.size() - 1;
+    lm.mesh.vert[nv].P() = vcg::Point3d(0.5, 0, 0);
+    lm.mesh.face[0].V(1) = &lm.mesh.vert[nv];            // face0 -> (v0,nv,v2)
+    vcg::tri::Allocator<CMeshOD>::AddFace(lm.mesh,
+        &lm.mesh.vert[nv], &lm.mesh.vert[1], &lm.mesh.vert[2]);  // 新面 (nv,v1,v2)
+
+    auto res = mgr.mergeBack(&mesh, lm, /*targetMark*/ 5);
+
+    // 关键断言：被切的是 face0 -> SetD；邻居 face1 没被切 -> 不能 SetD
+    assert(mesh.face[0].IsD());
+    assert(!mesh.face[1].IsD());
+    std::cout << "testMergeBackSharedEdge passed" << std::endl;
+}
+
+void testExtractLocalMesh() {
+    // 两个三角形共享边 (v1,v2)，都 mark=1
+    //   v2 ---- v3
+    //    \     |
+    //     \    |
+    //   v0 --- v1
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
+    mesh.vert[0].P() = Point3m(0,0,0);
+    mesh.vert[1].P() = Point3m(1,0,0);
+    mesh.vert[2].P() = Point3m(0,1,0);
+    mesh.vert[3].P() = Point3m(1,1,0);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+    mesh.face.EnableFFAdjacency();
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+
+    std::vector<int> curFaces = {0, 1};
+    MeshCutByMark::LocalMeshCutManager mgr;
+    auto lm = mgr.extractLocalMesh(&mesh, curFaces);
+
+    assert(lm.mesh.vert.size() == 4);      // 4 unique verts
+    assert(lm.mesh.face.size() == 2);      // 2 faces
+    assert(lm.Nv0 == 4);                    // all original
+    assert(lm.localToGlobalVert.size() == 4);
+    assert(lm.localFaceToGlobal.size() == 2);
+    assert(lm.localFaceToGlobal[0] == 0);
+    assert(lm.localFaceToGlobal[1] == 1);
+    // 顶点坐标一致
+    assert((lm.mesh.vert[0].P() - mesh.vert[0].P()).Norm() < 1e-9);
+    std::cout << "testExtractLocalMesh passed" << std::endl;
 }
 
 void testExtractSubRegions() {
@@ -962,6 +1135,148 @@ void testIntegration() {
     std::cout << "testIntegration passed" << std::endl;
 }
 
+void testMarkCutEdges() {
+    // 两个三角形拼成四边形，中间一条边要被标成分割边
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
+    mesh.vert[0].P() = Point3m(0,0,0);
+    mesh.vert[1].P() = Point3m(1,0,0);
+    mesh.vert[2].P() = Point3m(0,1,0);
+    mesh.vert[3].P() = Point3m(1,1,0);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[3]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[3], &mesh.vert[2]);
+    mesh.face.EnableFFAdjacency();
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+
+    // cutLine: 假装顶点 0 和 3 之间的边是切割边（global 顶点 0,3）
+    std::vector<std::vector<int>> cutLines = { {0, 3} };
+    MeshCutByMark::LocalMeshCutManager mgr;
+    mgr.markCutEdges(&mesh, cutLines);
+
+    // 边 (0,3) 两侧都应 FFp 自指
+    auto checkBoundary = [&](int f, int e){
+        return mesh.face[f].FFp(e) == &mesh.face[f];
+    };
+    // 找到以 (0,3) 为边的面边，确认两侧自指
+    bool found = false;
+    for (int f = 0; f < 2; f++) {
+        for (int e = 0; e < 3; e++) {
+            int a = mesh.face[f].V(e)->Index();
+            int b = mesh.face[f].V((e+1)%3)->Index();
+            auto k = std::minmax(a,b);
+            if (k == std::minmax(0,3)) {
+                assert(checkBoundary(f, e));
+                found = true;
+            }
+        }
+    }
+    assert(found);
+    std::cout << "testMarkCutEdges passed" << std::endl;
+}
+
+void testPropagateExternal() {
+    // curFaces=face0，外部邻接面=face1 共享边 (v0,v2)；新顶点落该边
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
+    mesh.vert[0].P() = Point3m(0,0,0);
+    mesh.vert[1].P() = Point3m(1,0,0);
+    mesh.vert[2].P() = Point3m(0,1,0);
+    mesh.vert[3].P() = Point3m(-1,1,0);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]); // face0 区域内
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[2], &mesh.vert[3]); // face1 外部，共享 (v0,v2)
+    mesh.face.EnableFFAdjacency();
+    // OCF: splitExternalFace 会读写 IMark()（新面继承外部面 mark）；
+    // 未 EnableMark 会读未分配存储 -> UB。与 testExtractLocalMesh/testMergeBack 对齐。
+    mesh.face.EnableMark();
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+
+    MeshCutByMark::LocalMeshCutManager mgr;
+    auto lm = mgr.extractLocalMesh(&mesh, {0});
+    // 在 local 边 (v0_local, v2_local) 中点加新顶点
+    vcg::tri::Allocator<CMeshOD>::AddVertices(lm.mesh, 1);
+    int nv = (int)lm.mesh.vert.size() - 1;
+    lm.mesh.vert[nv].P() = vcg::Point3d(0, 0.5, 0);  // (v0,v2) 中点
+    // local v0=0, v2=2；缝边 key = minmax(0,2)
+    assert(lm.seamExternal.count({0,2}) == 1);  // 抓到了外部面 face1
+
+    // 手工 merge：local 原顶点 0,1,2 -> global 0,1,2；新顶点(local 3) -> global 4
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 1);
+    mesh.vert[4].P() = vcg::Point3d(0, 0.5, 0);
+    MeshCutByMark::LocalMeshCutManager::MergeResult mr;
+    mr.vertLocalToGlobal = {0, 1, 2, 4};
+
+    mgr.propagateExternal(&mesh, lm, mr);
+
+    // 外部面 face1 被 SetD，且新增了把 face1 分成两块的面
+    assert(mesh.face[1].IsD());
+    int newExt = 0;
+    for (int i = 2; i < (int)mesh.face.size(); i++)
+        if (!mesh.face[i].IsD()) newExt++;
+    assert(newExt == 2);  // 原外部面一分为二
+    std::cout << "testPropagateExternal passed" << std::endl;
+}
+
+void testGrowNewMark() {
+    MeshCutByMark::RegionMarker rm;
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 3);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    rm.initNewMark(&mesh);          // m_newMark = {0}
+    rm.setNewMark(0, 7);
+    rm.growNewMark(3);              // 扩到 3
+    assert(rm.getNewMark(0) == 7);  // 已有不重置
+    assert(rm.getNewMark(1) == 0);  // 新增为 0
+    assert(rm.getNewMark(2) == 0);
+    std::cout << "testGrowNewMark passed" << std::endl;
+}
+
+void testRebuildCurFaces() {
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 3);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]); // face1 新
+    mesh.face[0].SetD();
+    std::vector<int> curFaces = {0};
+    MeshCutByMark::LocalMeshCutManager::MergeResult mr;
+    mr.newFaceGlobals = {1};
+    MeshCutByMark::LocalMeshCutManager::rebuildCurFaces(curFaces, &mesh, mr);
+    assert(curFaces.size() == 1 && curFaces[0] == 1);
+    std::cout << "testRebuildCurFaces passed" << std::endl;
+}
+
+void testCutRegionPlumbing() {
+    // 区域 2 个三角形 mark=1，构造一条 NON_MANIFOLD 折线端点悬空
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
+    mesh.vert[0].P() = Point3m(0,0,0);
+    mesh.vert[1].P() = Point3m(1,0,0);
+    mesh.vert[2].P() = Point3m(0,1,0);
+    mesh.vert[3].P() = Point3m(1,1,0);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+    mesh.face.EnableFFAdjacency(); mesh.face.EnableMark();
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+    vcg::tri::UpdateNormal<CMeshOD>::PerFace(mesh);
+    mesh.face[0].IMark() = 1; mesh.face[1].IMark() = 1;
+
+    MeshCutByMark::RegionMarker rm; rm.initNewMark(&mesh);
+    std::vector<int> curFaces = {0, 1};
+
+    MeshCutByMark::Polyline pl;
+    pl.type = MeshCutByMark::CUT_EDGE_NON_MANIFOLD;
+    pl.vertexIndices = {0, 1};
+    pl.startFaceIdx = 0; pl.startEdgeIdx = 0;
+    pl.endFaceIdx = 0;   pl.endEdgeIdx = 0;  // 端点不在 mark-diff 边 -> 触发切割
+
+    MeshCutByMark::LocalMeshCutManager mgr;
+    mgr.cutRegion(&mesh, curFaces, {pl}, /*targetMark*/1, rm);
+
+    // 桩 cutter 把 face0 一分为二：mesh.face[0] 被 SetD，新增面，curFaces 重建
+    assert(mesh.face[0].IsD());
+    assert(curFaces.size() >= 2);  // 至少含原 face1 + 新面
+    std::cout << "testCutRegionPlumbing passed" << std::endl;
+}
+
 int main() {
     testEdgeHash();
     testBuildEdgeInfo();
@@ -984,5 +1299,14 @@ int main() {
     testSplitMeshByMarkAndEdge();
     testSplitMeshByMarkAndEdgeSameMark();
     testIntegration();
+    testExtractLocalMesh();
+    testBuildCutInput();
+    testMergeBack();
+    testMergeBackSharedEdge();
+    testMarkCutEdges();
+    testPropagateExternal();
+    testGrowNewMark();
+    testRebuildCurFaces();
+    testCutRegionPlumbing();
     return 0;
 }

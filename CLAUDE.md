@@ -28,7 +28,7 @@ The algorithm runs in three phases, orchestrated by `JasMeshMarkAndCutSplit::Spl
 
 **Phase 1 — Edge Classification** (`tool/edge_info.h`): `EdgeInfoManager` builds an edge-to-face map and classifies edges as: `CUT_EDGE_NONE`, `CUT_EDGE_MARK_DIFF` (adjacent faces have different marks), `CUT_EDGE_NON_MANIFOLD` (3+ faces share edge), or `CUT_EDGE_BOUNDARY` (only 1 face).
 
-**Phase 2 — Cut and Mark** (`tool/region_marker.h`, `tool/polyline.h`, `tool/cut_plane.h`): `RegionMarker` does BFS flood-fill to find connected same-mark regions respecting cut edges as barriers. `PolylineManager` connects scattered cut edges into continuous polyline chains. `CutPlaneManager` constructs cutting planes from polyline endpoints.
+**Phase 2 — Cut and Mark** (`tool/region_marker.h`, `tool/polyline.h`, `tool/cut_plane.h`, `tool/local_mesh_cut.h`): `RegionMarker` does BFS flood-fill to find connected same-mark regions respecting cut edges as barriers. `PolylineManager` connects scattered cut edges into continuous polyline chains. `CutPlaneManager` constructs cutting planes from polyline endpoints. `LocalMeshCutManager` 提取局部 mesh → 外部 cutter → 合并回主网格，处理 NON_MANIFOLD 折线悬空端点的延长切割。
 
 **Phase 3 — Extract Polygons**: Groups faces by `newMark`, extracts boundary edge loops to form simple closed polygons.
 
@@ -44,12 +44,12 @@ Output: vector of `splitReg` structs containing original mark, new mark, triangl
 
 - C++17 standard
 - MSVC-specific: `/utf-8` flag for source files containing Chinese characters
-- No test framework — tests use raw `assert` in `tests/test_mesh_cut.cpp` (21 tests)
+- No test framework — tests use raw `assert` in `tests/test_mesh_cut.cpp` (30 tests)
 - VCGlib dependency is vendored (includes Eigen)
 
 ## Known Limitations
 
-- `cutTriangleByPlane()` in `tool/cut_plane.h` is a **stub/TODO** — computes signed distances but does not split triangles
+- Phase 2.4 延长切割依赖外部 `JasMeshAddCutLines::AddCutLines`（稳定黑盒，不在本仓实现）；测试用桩 cutter 做 plumbing 验证
 - Only the first boundary loop is stored per region (regions with holes lose data)
 - Boundary traversal assumes manifold mesh topology
 - Polyline extension uses front-insertion into vector (O(n²) — noted as future optimization target)
