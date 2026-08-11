@@ -1,5 +1,5 @@
 #include "JasMeshMarkAndCutSplit.h"
-#include "JasMeshMarkAndCutSplitInternal.h"
+#include "JasMeshLocalMarkAndCutSplitInternal.h"
 #include <vcg/complex/algorithms/update/topology.h>
 #include <vcg/complex/algorithms/update/normal.h>
 #include <filesystem>
