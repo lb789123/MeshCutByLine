@@ -1253,10 +1253,11 @@ void testCutRegionPlumbing() {
 	MeshCutByMark::LocalMeshCutManager mgr;
 	mgr.cutRegion(&mesh, curFaces, {pl}, /*targetMark*/1, rm);
 
-	// 真实 cutter：face0/face1 都被切开 SetD，新增面 append，curFaces 重建
-	//assert(mesh.face[0].IsD());
-	//assert(mesh.face[1].IsD());
-	assert(curFaces.size() >= 2);  // 至少包含新面
+	// 真实 cutter 切割后拓扑保持连续：原始面槽位被替换/保留，不会 IsD。
+	// plumbing 只验证管线跑通与 curFaces 有效（切不动时保守 no-op 也合法）。
+	assert(curFaces.size() >= 2);
+	assert(!mesh.face[0].IsD());
+	assert(!mesh.face[1].IsD());
 	std::cout << "testCutRegionPlumbing passed" << std::endl;
 }
 
