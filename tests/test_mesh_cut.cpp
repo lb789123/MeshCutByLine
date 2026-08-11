@@ -657,14 +657,16 @@ void testMergeBack() {
 
     auto res = mgr.mergeBack(&mesh, lm, /*targetMark*/ 5);
 
-    // 主网格：face0 应被 SetD；新增 2 个面（face0 改写算 1 个新 + append 1 个）
-    assert(mesh.face[0].IsD());
-    // 新面继承 mark=5
+    // 主网格：face0 槽位被原位改写（不 SetD，拓扑连续）；额外分片 append 1 个。
+    assert(!mesh.face[0].IsD());
+    assert(mesh.face[0].IMark() == 5);
+    assert(mesh.face[0].V(1)->Index() == 3);  // 改写为 (v0, nv, v2)，nv=全局下标 3
+    // 只有 1 个 append 的额外分片（(nv,v1,v2)）继承 mark=5
     int aliveNew = 0;
     for (int i = 1; i < (int)mesh.face.size(); i++) {
         if (!mesh.face[i].IsD() && mesh.face[i].IMark() == 5) aliveNew++;
     }
-    assert(aliveNew == 2);
+    assert(aliveNew == 1);
     // 顶点 append 了一个新顶点
     assert((int)mesh.vert.size() == 4);
     std::cout << "testMergeBack passed" << std::endl;
@@ -703,8 +705,8 @@ void testMergeBackSharedEdge() {
 
     auto res = mgr.mergeBack(&mesh, lm, /*targetMark*/ 5);
 
-    // 关键断言：被切的是 face0 -> SetD；邻居 face1 没被切 -> 不能 SetD
-    assert(mesh.face[0].IsD());
+    // 关键断言：被切的是 face0 -> 槽位原位改写（不 SetD）；邻居 face1 没被切 -> 保持
+    assert(!mesh.face[0].IsD());
     assert(!mesh.face[1].IsD());
     std::cout << "testMergeBackSharedEdge passed" << std::endl;
 }

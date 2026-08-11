@@ -49,9 +49,13 @@ MeshCutByLine/
 │   ├── polyline.h           # 折线连接
 │   ├── cut_plane.h          # 切割平面构造
 │   ├── region_marker.h      # 区域标记
+│   ├── local_mesh_cut.h     # 局部 mesh 切割管线（LocalMeshCutManager）
+│   ├── cut_mesh.h           # 外部 cutter 契约（引用 cgalLocalMeshCut）
 │   └── cmesh.h              # VCGlib 网格类型定义
 ├── JasMeshMarkAndCutSplit.h    # 主头文件
 ├── JasMeshMarkAndCutSplit.cpp  # 主实现
+├── external/
+│   └── cgalLocalMeshCut/    # 外部局部切割库（git submodule，CGAL corefine）
 ├── tests/
 │   └── test_mesh_cut.cpp    # 测试文件
 ├── vcglib/                  # VCGlib 依赖库
@@ -76,12 +80,10 @@ Phase 2: 延长线切割并标记新区域
         // 将切割边连接成连续折线
         polylines = connectEdgesToPolylines(cutEdges)
         
-        // 从端点延长切割
-        for each polyline in polylines:
-            if polyline.start 不在 mark 不同的边上:
-                从 polyline.start 延长切割
-            if polyline.end 不在 mark 不同的边上:
-                从 polyline.end 延长切割
+        // 从端点延长切割（仅 NON_MANIFOLD 折线悬空端点）：
+        // 提取局部 mesh → 外部 cutter（JasMeshAddCutLines::AddCutLines，
+        // cgalLocalMeshCut submodule，CGAL corefine）→ 合并回主网格
+        LocalMeshCutManager::cutRegion(curFaces, polylines, targetMark)
         
         // 拣选子区域并标记新 mark
         subRegions = extractSubRegions(curFaces)
@@ -116,6 +118,7 @@ struct splitReg {
     std::vector<int> inTris;     // 包含的三角形索引
     vcg::Point3d normal;         // 法向量
     std::vector<int> boundlines; // 边界边的顶点索引序列
+    std::vector<std::vector<int>> boundaries; // 全部边界环（第 0 圈外圈，其余为洞）
 };
 ```
 
@@ -127,24 +130,30 @@ struct splitReg {
 
 - **VCGlib**：已包含在 `vcglib/` 目录
 - **Eigen**：已包含在 `vcglib/eigenlib/` 目录
+- **cgalLocalMeshCut**：`external/` 下的 git submodule（GitHub），提供局部切割黑盒
+  `JasMeshAddCutLines::AddCutLines`（基于 CGAL corefine）
+- **CGAL 6.1.1**：`D:\github\CGAL-6.1.1`（配置时 `-DCGAL_DIR` 指定）
+- **Boost**：CGAL 头文件依赖（如 `D:\github\boost_1_91_0`，配置前设置 `BOOST_ROOT`）
+- **GMP/MPFR**：CGAL 附带（`${CGAL_DIR}/auxiliary/gmp`，运行测试需把 `bin` 加入 PATH）
 - **CMake**：版本 3.15+
 - **C++ 编译器**：支持 C++17（MSVC 2022、GCC 9+、Clang 10+）
 
-### Windows (Visual Studio 2022)
+### 初始化 submodule
 
 ```bash
-# 创建构建目录
-mkdir build
-cd build
+git submodule update --init --recursive
+```
 
-# 生成 Visual Studio 项目
-cmake -G "Visual Studio 17 2022" -A x64 ..
+### Windows（Ninja + MSVC）
 
-# 编译
-cmake --build . --config Release
+```bash
+$env:BOOST_ROOT = 'D:\github\boost_1_91_0'   # 必须在配置前设置
+cmd /c '"C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat" -arch=x64 >nul 2>&1 && cmake -S . -B out/build/ninja -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_MAKE_PROGRAM="C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe" -DCGAL_DIR=D:/github/CGAL-6.1.1'
+cmd /c '"C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat" -arch=x64 >nul 2>&1 && cmake --build out/build/ninja --target test_mesh_cut -j 8'
 
-# 运行测试
-./Release/test_mesh_cut.exe
+# 运行测试（GMP/MPFR 为动态库，需加入 PATH）
+$env:PATH = 'D:\github\CGAL-6.1.1\auxiliary\gmp\bin;' + $env:PATH
+.\out\build\ninja\test_mesh_cut.exe
 ```
 
 ### Linux/macOS
@@ -336,7 +345,7 @@ f v1 v2 v3
 
 ## 已知限制
 
-1. **Phase 2.4 延长切割依赖外部 cutter**：已改为「提取局部 mesh → 外部 cutter → 合并回主网格」管线（真实 cutter `JasMeshAddCutLines::AddCutLines` 外部提供，不在本仓实现）；测试用桩 cutter 验证 plumbing
+1. **Phase 2.4 延长切割依赖外部 cutter**：已改为「提取局部 mesh → 外部 cutter（cgalLocalMeshCut submodule）→ 合并回主网格」管线；真实 cutter 为保守黑盒，切割线退化（沿边/过顶点/中点落边上）时可能 no-op，可接受
 2. **单边界环**：只存储第一个边界环，多孔区域会丢失信息
 3. **流形假设**：边界遍历假设网格是流形的
 

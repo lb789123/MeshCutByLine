@@ -1,61 +1,58 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with this repository.
 
 ## Project Overview
 
-MeshCutByLine is a C++17 library that splits triangle meshes into simple polygon regions based on per-face `mark` labels. Built on top of VCGlib (vendored in `vcglib/`), it uses an "extended line cutting" algorithm to handle degenerate mesh topology (non-manifold edges, holes) and produce clean polygon boundaries.
+MeshCutByLine is a C++17 library that splits triangle meshes into simple polygon regions based on per-face `mark` labels. It uses an "extended line cutting" algorithm to handle degenerate mesh topology (non-manifold edges, holes) and produce clean polygon boundaries.
 
-## Build Commands
+The actual local cutting is delegated to an **external cutter**: `external/cgalLocalMeshCut` (git submodule, GitHub). It provides `JasMeshAddCutLines::AddCutLines` (CGAL corefine) which cuts an isolated local mesh along a line; this repo only orchestrates (extract local mesh -> cut -> merge back -> pick sub-regions -> extract polygons).
 
-```bash
-# Configure (Windows/VS2022)
-mkdir build && cd build
-cmake -G "Visual Studio 17 2022" -A x64 ..
+## Build Commands (Windows / Ninja + MSVC)
 
-# Build
-cmake --build . --config Release
+```powershell
+# 1. init submodule
+git submodule update --init --recursive
 
-# Run tests
-./Release/test_mesh_cut.exe
+# 2. configure (BOOST_ROOT must be set BEFORE configure)
+$env:BOOST_ROOT = 'D:\github\boost_1_91_0'
+cmd /c '"C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat" -arch=x64 >nul 2>&1 && cmake -S . -B out/build/ninja -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_MAKE_PROGRAM="C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe" -DCGAL_DIR=D:/github/CGAL-6.1.1'
+
+# 3. build + run tests (GMP/MPFR DLLs must be on PATH)
+cmd /c '"C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat" -arch=x64 >nul 2>&1 && cmake --build out/build/ninja --target test_mesh_cut -j 8'
+$env:PATH = 'D:\github\CGAL-6.1.1\auxiliary\gmp\bin;' + $env:PATH
+.\out\build\ninja\test_mesh_cut.exe
 ```
 
-CMake 3.15+ required. The project uses MSVC `/utf-8` flag for Chinese characters in comments.
+CMake 3.18+ required (submodule's CMakeLists). MSVC `/utf-8` for Chinese comments; CGAL template-heavy code needs `/bigobj` (already set on `cglmcut`).
 
 ## Architecture
 
-The algorithm runs in three phases, orchestrated by `JasMeshMarkAndCutSplit::SplitMeshByMarkAndEdge()`:
+`JasMeshMarkAndCutSplit::SplitMeshByMarkAndEdge()` runs three phases:
 
-**Phase 1 — Edge Classification** (`tool/edge_info.h`): `EdgeInfoManager` builds an edge-to-face map and classifies edges as: `CUT_EDGE_NONE`, `CUT_EDGE_MARK_DIFF` (adjacent faces have different marks), `CUT_EDGE_NON_MANIFOLD` (3+ faces share edge), or `CUT_EDGE_BOUNDARY` (only 1 face).
+- **Phase 1 - Edge Classification** (`tool/edge_info.h`): `EdgeInfoManager` builds edge->face map and classifies edges: `CUT_EDGE_NONE`, `CUT_EDGE_MARK_DIFF`, `CUT_EDGE_NON_MANIFOLD` (3+ faces), `CUT_EDGE_BOUNDARY` (1 face).
+- **Phase 2 - Cut and Mark** (`tool/region_marker.h`, `tool/polyline.h`, `tool/local_mesh_cut.h`): `RegionMarker` flood-fills same-mark regions; `PolylineManager` connects cut edges into polylines; for dangling endpoints of `NON_MANIFOLD` polylines, `LocalMeshCutManager::cutRegion` extracts a local mesh, calls the external cutter `JasMeshAddCutLines::AddCutLines`, merges back (in-place rewrite of split originals, no `SetD`), marks cut edges by breaking FF adjacency, and rebuilds `curFaces`.
+- **Phase 3 - Extract Polygons**: groups faces by `newMark` and extracts boundary loops via `jaslmc::SubRegionBoundary` (outer loop first, holes after).
 
-**Phase 2 — Cut and Mark** (`tool/region_marker.h`, `tool/polyline.h`, `tool/cut_plane.h`, `tool/local_mesh_cut.h`): `RegionMarker` does BFS flood-fill to find connected same-mark regions respecting cut edges as barriers. `PolylineManager` connects scattered cut edges into continuous polyline chains. `CutPlaneManager` constructs cutting planes from polyline endpoints. `LocalMeshCutManager` 提取局部 mesh → 外部 cutter → 合并回主网格，处理 NON_MANIFOLD 折线悬空端点的延长切割。
+Output: `std::vector<splitReg>` with `mark`, `newMark`, `inTris`, `normal`, `boundlines` (first loop) and `boundaries` (all loops).
 
-**Phase 3 — Extract Polygons**: Groups faces by `newMark`, extracts boundary edge loops to form simple closed polygons.
+## Key Types / Conventions
 
-Output: vector of `splitReg` structs containing original mark, new mark, triangle indices, face normal, and boundary vertex indices.
-
-## Key Types
-
-- `CMeshOD` (`tool/cmesh.h`): VCGlib TriMesh with OCF (Optional Components Fast) — face-face adjacency, marks, normals. Scalar type is `double`.
-- All tool headers in `tool/` use **inline implementations** (header-only).
-- Project namespace: `MeshCutByMark`.
-
-## Code Conventions
-
-- C++17 standard
-- MSVC-specific: `/utf-8` flag for source files containing Chinese characters
-- No test framework — tests use raw `assert` in `tests/test_mesh_cut.cpp` (30 tests)
-- VCGlib dependency is vendored (includes Eigen)
+- `CMeshOD` (`tool/cmesh.h`): VCGlib TriMesh with OCF components; scalar `double`.
+- Tool headers in `tool/` are header-only (`inline` implementations); namespace `MeshCutByMark`.
+- External cutter contract: `tool/cut_mesh.h` only includes `JasMeshAddCutLines.h` from the submodule; the implementation is linked from `cglmcut`.
+- C++17; tests use raw `assert` in `tests/test_mesh_cut.cpp` (30 tests, run in order from `main()`).
+- VCGlib (vendored, includes Eigen) and cgalLocalMeshCut (submodule) both ship their own `vcglib/` copy; they are identical, include guards keep them from colliding.
 
 ## Known Limitations
 
-- Phase 2.4 延长切割依赖外部 `JasMeshAddCutLines::AddCutLines`（稳定黑盒，不在本仓实现）；测试用桩 cutter 做 plumbing 验证
-- Only the first boundary loop is stored per region (regions with holes lose data)
-- Boundary traversal assumes manifold mesh topology
-- Polyline extension uses front-insertion into vector (O(n²) — noted as future optimization target)
+- The external cutter is a conservative black box: degenerate cut lines (along mesh edges / through vertices / midpoint on an edge) may no-op (acceptable per phase-2 design).
+- `boundlines` keeps only the first loop for backward compatibility; full loops (outer + holes) are in `splitReg::boundaries`.
+- Boundary traversal assumes manifold topology.
+- Polyline extension uses front-insertion into a vector (O(n^2) - future optimization).
 
 ## Documentation
 
-- `README.md`: Comprehensive documentation in Chinese (background, algorithm, file structure, data structures, build instructions, tests, usage)
-- `docs/superpowers/specs/`: Requirements and design specifications
-- `docs/superpowers/plans/`: Implementation plan
+- `README.md`: comprehensive Chinese docs (background, algorithm, build, usage).
+- `docs/superpowers/specs/2026-07-21-mesh-cut-by-mark-design.md`: design (aligned with code).
+- `docs/superpowers/plans/2026-07-22-phase2-local-mesh-cut.md` + `specs/2026-07-22-phase2-local-mesh-cut-design.md`: phase-2 local mesh cut design/plan.

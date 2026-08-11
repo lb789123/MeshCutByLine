@@ -55,7 +55,7 @@ void AddCutLines(CMeshOD *pMesh,
 ```
 A. 提取局部 mesh       localMesh ← curFaces + 其顶点（重映射），记 Nv0/Nf0，抓取边界缝信息
 B. 切割               每个悬空端点：构造 line+normal → AddCutLines(localMesh, ...)
-C. merge 回 m_pMesh    新顶点/新面 append；被分裂的原始面 SetD()
+C. merge 回 m_pMesh    新顶点 append；被切原始面槽位原位改写（不 SetD），额外分片 append
 E. 外部加点           落在 curFaces 边界边上的新顶点 → 插入外部邻接面
 F1. 重算 FF           UpdateTopology::FaceFace(m_pMesh)
 D. 标分割边           cutLine → global → 对应 face-edge 的 FFp 置空
@@ -97,18 +97,15 @@ F2. 收尾              重建 curFaces、resize m_newMark
 
 ### C. merge 回 m_pMesh
 
-> 新面的判定**靠来源下标，不靠下标范围**：cutter 可能把分裂出的某个新面写回原槽位（替换），所以 local `≥ Nf0` 不可靠。一律读 face 上的「来源原始面下标」：来源 = 自身 → 未动的原始面；来源 ≠ 自身 → 新面。
+> cutter 契约：被切开的原始面**槽位被原位重写**（第一个分片写回原槽位，`IMark` 保持），额外分片 append 在 local 末尾；**全程不 `SetD`**，拓扑保持连续。
 
 1. 构建统一顶点映射 `localVertToGlobal`：
    - local `< Nv0` → `localToGlobalVert[idx]`
    - local `≥ Nv0` → 新 append 到 `m_pMesh.vert` 后的全局下标（新顶点是 append 的，范围可靠；先 append 所有新顶点，记 `newVertLocalToGlobal`）。
 2. 遍历 localMesh 所有面：
-   - 来源 = 自身：对应 `m_pMesh` 原始面，**不动**。
-   - 来源 ≠ 自身（新面）：append 到 `m_pMesh.face`——
-     - 3 个顶点引用按 `localVertToGlobal` 重映射。
-     - `IMark` = 继承区域 `targetMark`。
-     - 经 `localFaceToGlobal[来源]` 得到 `originGlobal`，加入 `splitOrigins`。
-3. 对 `splitOrigins` 中每个 `g`：`m_pMesh->face[g].SetD()`（被新面接管）。
+   - 未引用新顶点（无 `local ≥ Nv0`）→ 未动原始面，对应 `m_pMesh` 原始面**不动**。
+   - 引用新顶点且 `i < Nf0` → 槽位已被 cutter 原位重写：**原位改写** `m_pMesh->face[localFaceToGlobal[i]]`（顶点引用按 `localVertToGlobal` 重映射、`IMark = targetMark`），不 `SetD`。
+   - 引用新顶点且 `i ≥ Nf0` → 额外分片：append 到 `m_pMesh.face`（顶点引用重映射、`IMark = targetMark`）。
 
 ### E. 外部加点
 
@@ -149,7 +146,7 @@ vcg::tri::UpdateTopology<CMeshOD>::FaceFace(*m_pMesh);
 
 ### F2. 收尾
 
-1. 重建 `curFaces`：移除被 `SetD()` 的原始下标，加入 C 步 append 的新面下标。（E 步加的外部面不属于本区域，不加进 `curFaces`。）
+1. 重建 `curFaces`：保留原位改写后的原始下标（仍有效），加入 C 步 append 的额外分片下标。（E 步加的外部面不属于本区域，不加进 `curFaces`。）
 2. `m_newMark.resize(m_pMesh->face.size())`，新增面初始化为 0（供 `extractSubRegions` 处理）。
 3. 交还控制权给主循环，`extractSubRegions(curFaces, ...)` / `markSubRegions` 照常跑。
 
@@ -159,7 +156,7 @@ vcg::tri::UpdateTopology<CMeshOD>::FaceFace(*m_pMesh);
 - `localFaceToGlobal`：local face idx → global face idx（仅原始面 `[0,Nf0)`）。
 - `Nv0`：原顶点数量，区分新旧**顶点**（可靠，新顶点 append）。
 - 边界缝表：`(globalVertA, globalVertB) → extGlobalFace`（A 步抓取）。
-- 来源原始面下标：cutter 写在 localMesh 每个 face 上。**这是区分新旧面的唯一可靠信号**（来源=自身为原始面，≠自身为新面）。accessor 实现时定，见 §9。
+- 槽位语义：local 面 `i < Nf0` 引用新顶点 → 原位重写；`i ≥ Nf0` → 额外分片 append。`Nv0` 区分新旧顶点，`Nf0`/`localFaceToGlobal` 区分原始槽位与额外分片。
 
 ## 7. 关键决策与假设
 
@@ -173,8 +170,8 @@ vcg::tri::UpdateTopology<CMeshOD>::FaceFace(*m_pMesh);
 | 端点→首新顶点 边 | 单独标记（cutLine 不含端点） | 见 D.1 |
 | mark 继承 | 新面继承区域 `targetMark` | 保证 flood-fill 归属正确 |
 | 分割边表示 | `FFp` 自指（沿用 `isCutEdge` 判定） | 不引入新属性 |
-| 被分裂原始面 | cutter 直接替换；我们在 m_pMesh `SetD` | 不 compact，保留下标稳定 |
-| 新面判定 | 靠来源下标（≠自身），**不靠** local 下标范围 | cutter 可能复用原槽位 |
+| 被分裂原始面 | cutter 原位重写槽位；merge 原位改写全局面（**不 `SetD`**） | 拓扑连续，原面不删除 |
+| 新面判定 | local 面引用新顶点：`i < Nf0` → 原位改写；`i ≥ Nf0` → append | 槽位语义，不靠来源属性 |
 | FF 重算 | 整网格 `UpdateTopology::FaceFace` | 在 C/E 之后、D 之前 |
 
 ## 8. 与下游集成
@@ -190,13 +187,13 @@ vcg::tri::UpdateTopology<CMeshOD>::FaceFace(*m_pMesh);
 - **延长段同时穿出多条边界边**：E 步对每个落点分别传播。
 - **区域不共面**（mark 相同但法向不一）：取单法向可能偏；目前假设同 mark 共面，若实际不共面需改用逐面法向（后续视情况）。
 - **FF 重算成本**：整网格 O(n)；区域多/大时有开销，必要时可局部重算（本设计先整网格）。
-- **来源下标**：cutter 在 localMesh 每个 face 上写「来源原始面下标」。语义：来源=自身 → 未动的原始面；来源≠自身 → 新面，指向它分裂自的那个原始面（local 下标）。具体 accessor 实现时与 cutter 侧对齐（PerFaceAttribute 或新增 OCF 组件）。
+- **槽位语义**：cutter 把被切原始面的第一个分片写回原槽位（`i < Nf0` 且引用新顶点），其余分片 append（`i ≥ Nf0`）。merge 据此原位改写全局面，不依赖任何来源属性。
 
 ## 10. 测试策略
 
 - **A 单测**：给 `curFaces`，验证 localMesh 顶点/面数、映射正确、`Nv0/Nf0` 正确。
 - **B 单测**：给定折线 + 端点，验证 `line` 两点方向/长度、`normal` 选取正确（可用 stub `AddCutLines` 记录入参）。
-- **C 单测**：造一个已知切割结果的 localMesh（手工填新顶点/新面 + 来源标记），验证 merge 后 `m_pMesh` 新面正确、被分裂原始面 `SetD`、顶点引用重映射正确。
+- **C 单测**：造一个已知切割结果的 localMesh（原槽位改写 + append 分片），验证 merge 后 `m_pMesh` 原面被原位改写（不 `SetD`）、额外分片 append、顶点引用重映射正确。
 - **D 单测**：给定 `cutLine`，验证对应 face-edge 的 FFp 被置自指、`isCutEdge` 返回 true。
 - **E 单测**：造一个落在边界边上的新顶点，验证外部邻接面被正确一分为二、mark 继承。
 - **集成测试**：含 `NON_MANIFOLD` 折线、端点悬空的场景，端到端验证 `extractSubRegions` 分出 ≥2 个子区域、网格 watertight（无 T-junction）。

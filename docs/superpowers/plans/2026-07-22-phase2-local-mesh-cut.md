@@ -334,9 +334,9 @@ git commit -m "feat: 实现 Phase 2.4 步骤 B——构造切割 line+normal"
 
 **Interfaces:**
 - Consumes: `CMeshOD* mesh`、`LocalMesh& lm`（cutter 已切过）、`int targetMark`。
-- Produces: `struct MergeResult { std::vector<int> newFaceGlobals; std::vector<int> splitOriginGlobals; }`；同时把新顶点/新面 append 进 `mesh`，被分裂原始面 `SetD()`。
+- Produces: `struct MergeResult { std::vector<int> newFaceGlobals; std::vector<int> vertLocalToGlobal; }`；同时把新顶点 append 进 `mesh`，被切原始面槽位**原位改写**（不 `SetD`），额外分片 append。
 
-> 约定：新面判定靠「引用 local 顶点 ≥ Nv0」；新面→被分裂原始面靠**几何反推** `deriveOrigin`（新面的两个原顶点构成被分裂原三角形的边），不依赖 cutter 写属性。
+> 约定：cutter 把被切原始面第一个分片写回原槽位（`i < Nf0` 且引用新顶点），其余分片 append（`i ≥ Nf0`）；merge 据此原位改写全局面，不依赖几何反推或来源属性。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -364,8 +364,9 @@ void testMergeBack() {
 
     auto res = mgr.mergeBack(&mesh, lm, /*targetMark*/ 5);
 
-    // 主网格：face0 应被 SetD；新增 2 个面（face0 改写算 1 个新 + append 1 个）
-    assert(mesh.face[0].IsD());
+    // 主网格：face0 槽位被原位改写（不 SetD，拓扑连续）；额外分片 append 1 个
+    assert(!mesh.face[0].IsD());
+    assert(mesh.face[0].V(1)->Index() == 3);  // 改写为 (v0, nv, v2)
     // 新面继承 mark=5
     int aliveNew = 0;
     for (int i = 1; i < (int)mesh.face.size(); i++) {
@@ -390,8 +391,7 @@ Expected: 编译失败（`mergeBack` 未定义）。
 
 ```cpp
     struct MergeResult {
-        std::vector<int> newFaceGlobals;       // append 进 mesh 的新面 global 下标
-        std::vector<int> splitOriginGlobals;   // 被 SetD 的原始面 global 下标
+        std::vector<int> newFaceGlobals;       // append 进 mesh 的额外分片 global 下标
         std::vector<int> vertLocalToGlobal;    // localVertIdx -> globalVertIdx（含新顶点）
     };
 
@@ -452,11 +452,26 @@ Expected: 编译失败（`mergeBack` 未定义）。
             mesh->face[newG].IMark() = targetMark;
             res.newFaceGlobals.push_back(newG);
 
-            // 反推来源 global -> SetD
-            int splitG = deriveOriginGlobal(lm, i);
-            if (splitG >= 0 && splitG < (int)mesh->face.size() && !mesh->face[splitG].IsD()) {
-                mesh->face[splitG].SetD();
-                res.splitOriginGlobals.push_back(splitG);
+            // 槽位语义：i < Nf0 → 原位改写对应全局面；i >= Nf0 → append
+            if (i < (int)lm.localFaceToGlobal.size()) {
+                int g = lm.localFaceToGlobal[i];
+                if (g >= 0 && g < (int)mesh->face.size() && !mesh->face[g].IsD()) {
+                    mesh->face[g].V(0) = &mesh->vert[ga];
+                    mesh->face[g].V(1) = &mesh->vert[gb];
+                    mesh->face[g].V(2) = &mesh->vert[gc];
+                    mesh->face[g].IMark() = targetMark;
+                } else {
+                    vcg::tri::Allocator<CMeshOD>::AddFace(
+                        *mesh, &mesh->vert[ga], &mesh->vert[gb], &mesh->vert[gc]);
+                    mesh->face.back().IMark() = targetMark;
+                    res.newFaceGlobals.push_back(static_cast<int>(mesh->face.size()) - 1);
+                }
+            } else {
+                vcg::tri::Allocator<CMeshOD>::AddFace(
+                    *mesh, &mesh->vert[ga], &mesh->vert[gb], &mesh->vert[gc]);
+                int newG = static_cast<int>(mesh->face.size()) - 1;
+                mesh->face[newG].IMark() = targetMark;
+                res.newFaceGlobals.push_back(newG);
             }
         }
         return res;
@@ -783,7 +798,7 @@ void testGrowNewMark() {
         vcg::tri::UpdateNormal<CMeshOD>::PerFace(*mesh);
     }
 
-    // 重建 curFaces：移除 SetD 原始面，加入新面
+    // 重建 curFaces：保留原位改写后的原下标（仍有效），加入 append 的额外分片
     static void rebuildCurFaces(std::vector<int>& curFaces, CMeshOD* mesh,
                                 const MergeResult& merge) {
         std::vector<int> out;
@@ -982,9 +997,13 @@ void testCutRegionPlumbing() {
     MeshCutByMark::LocalMeshCutManager mgr;
     mgr.cutRegion(&mesh, curFaces, {pl}, /*targetMark*/1, rm);
 
-    // 桩 cutter 把 face0 一分为二：mesh.face[0] 被 SetD，新增面，curFaces 重建
-    assert(mesh.face[0].IsD());
-    assert(curFaces.size() >= 2);  // 至少含原 face1 + 新面
+    // 真实 cutter 为保守黑盒：切割后拓扑连续、原面不 IsD；切不动时 no-op 也合法。
+    // plumbing 只验证管线跑通与 curFaces 有效。
+    assert(!curFaces.empty());
+    for (int fi : curFaces) {
+        assert(fi >= 0 && fi < (int)mesh.face.size());
+        assert(!mesh.face[fi].IsD());
+    }
     std::cout << "testCutRegionPlumbing passed" << std::endl;
 }
 ```

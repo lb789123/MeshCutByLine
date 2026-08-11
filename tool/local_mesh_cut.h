@@ -107,8 +107,7 @@ public:
 
     // 步骤 C 的返回：merge 回主网格后给上层用的映射
     struct MergeResult {
-        std::vector<int> newFaceGlobals;       // append 进 mesh 的新面 global 下标
-        std::vector<int> splitOriginGlobals;   // 被 SetD 的原始面 global 下标
+        std::vector<int> newFaceGlobals;       // append 进 mesh 的额外分片 global 下标
         std::vector<int> vertLocalToGlobal;    // localVertIdx -> globalVertIdx（含新顶点）
     };
 
@@ -122,36 +121,13 @@ public:
         return false;
     }
 
-    // 反推新面来自哪个原始面（global）：新面质心落在哪个 curFaces 三角形内，就是被分裂的那个。
-    // 比边查表稳：对"完整边是共享内部边"的切片也能正确归属（质心唯一落在一个原三角内）。
-    static int deriveOriginGlobal(const LocalMesh& lm, int localFaceIdx, CMeshOD* mesh) {
-        const CFaceOD& f = lm.mesh.face[localFaceIdx];
-        vcg::Point3d centroid = (f.V(0)->P() + f.V(1)->P() + f.V(2)->P()) / 3.0;
-        for (int gf : lm.localFaceToGlobal) {
-            if (gf < 0 || gf >= (int)mesh->face.size()) continue;
-            if (mesh->face[gf].IsD()) continue;  // already handled by a sibling piece
-            const CFaceOD& of = mesh->face[gf];
-            if (pointInTriangle(centroid, of.V(0)->P(), of.V(1)->P(), of.V(2)->P()))
-                return gf;
-        }
-        return -1;
-    }
-
-    // p 与 c 是否在直线 ab 同侧（含容差）
-    static bool sameSide(const vcg::Point3d& p, const vcg::Point3d& a,
-                         const vcg::Point3d& b, const vcg::Point3d& c) {
-        vcg::Point3d cp1 = (b - a) ^ (p - a);
-        vcg::Point3d cp2 = (b - a) ^ (c - a);
-        return (cp1 * cp2) >= -1e-9;
-    }
-    // p 是否在三角形 abc 内（共面，用同侧法）
-    static bool pointInTriangle(const vcg::Point3d& p, const vcg::Point3d& a,
-                                const vcg::Point3d& b, const vcg::Point3d& c) {
-        return sameSide(p, a, b, c) && sameSide(p, b, c, a) && sameSide(p, c, a, b);
-    }
-
     // 步骤 C：把 cutter 切过的 local mesh merge 回主网格。
-    // 新顶点/新面 append 进 mesh；被分裂的原始面 SetD()。
+    // 语义（与 cutter 契约一致）：被切开的原始面槽位被 cutter 原位重写
+    // （不 SetD），额外分片 append 在 local 末尾；merge 时：
+    //   - local 面 i < Nf0 且引用新顶点 → 原位改写对应 global 面（localFaceToGlobal[i]）
+    //   - local 面 i >= Nf0（额外分片）→ append 新 global 面
+    //   - 未动原始面（无新顶点）→ 保持
+    // 拓扑保持连续：全程不 SetD。
     MergeResult mergeBack(CMeshOD* mesh, LocalMesh& lm, int targetMark) {
         MergeResult res;
 
@@ -165,7 +141,8 @@ public:
             res.vertLocalToGlobal.push_back(firstNewG + k);
         }
 
-        // 2) 遍历 local 面：新面（含新顶点）append，未动原始面跳过
+        // 2) 遍历 local 面
+        int numOriginFaces = static_cast<int>(lm.localFaceToGlobal.size());
         for (int i = 0; i < (int)lm.mesh.face.size(); i++) {
             if (lm.mesh.face[i].IsD()) continue;
             if (!faceHasNewVert(lm, i)) continue;  // 未动原始面，保持
@@ -173,17 +150,29 @@ public:
             int ga = res.vertLocalToGlobal[static_cast<int>(lm.mesh.face[i].V(0) - &lm.mesh.vert[0])];
             int gb = res.vertLocalToGlobal[static_cast<int>(lm.mesh.face[i].V(1) - &lm.mesh.vert[0])];
             int gc = res.vertLocalToGlobal[static_cast<int>(lm.mesh.face[i].V(2) - &lm.mesh.vert[0])];
-            vcg::tri::Allocator<CMeshOD>::AddFace(
-                *mesh, &mesh->vert[ga], &mesh->vert[gb], &mesh->vert[gc]);
-            int newG = static_cast<int>(mesh->face.size()) - 1;
-            mesh->face[newG].IMark() = targetMark;
-            res.newFaceGlobals.push_back(newG);
 
-            // 反推来源 global -> SetD
-            int splitG = deriveOriginGlobal(lm, i, mesh);
-            if (splitG >= 0 && splitG < (int)mesh->face.size() && !mesh->face[splitG].IsD()) {
-                mesh->face[splitG].SetD();
-                res.splitOriginGlobals.push_back(splitG);
+            if (i < numOriginFaces) {
+                // 被切开原始面槽位已被 cutter 原位重写：改写对应 global 面（不 SetD）
+                int g = lm.localFaceToGlobal[i];
+                if (g >= 0 && g < (int)mesh->face.size() && !mesh->face[g].IsD()) {
+                    mesh->face[g].V(0) = &mesh->vert[ga];
+                    mesh->face[g].V(1) = &mesh->vert[gb];
+                    mesh->face[g].V(2) = &mesh->vert[gc];
+                    mesh->face[g].IMark() = targetMark;
+                } else {
+                    // 防御：原面缺失/已删除则 append
+                    vcg::tri::Allocator<CMeshOD>::AddFace(
+                        *mesh, &mesh->vert[ga], &mesh->vert[gb], &mesh->vert[gc]);
+                    mesh->face.back().IMark() = targetMark;
+                    res.newFaceGlobals.push_back(static_cast<int>(mesh->face.size()) - 1);
+                }
+            } else {
+                // 额外分片：append
+                vcg::tri::Allocator<CMeshOD>::AddFace(
+                    *mesh, &mesh->vert[ga], &mesh->vert[gb], &mesh->vert[gc]);
+                int newG = static_cast<int>(mesh->face.size()) - 1;
+                mesh->face[newG].IMark() = targetMark;
+                res.newFaceGlobals.push_back(newG);
             }
         }
         return res;
