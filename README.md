@@ -201,6 +201,15 @@ make -j$(nproc)
 | `testInitNewMark` | 验证新标记初始化 |
 | `testExtractBoundaryEdges` | 验证单三角形边界提取 |
 | `testExtractBoundaryEdgesTwoTriangles` | 验证两三角形边界提取 |
+| `testExtractLocalMesh` | 验证局部 mesh 提取（顶点/面映射、Nv0） |
+| `testBuildCutInput` | 验证延长段 line + normal 构造 |
+| `testMergeBack` | 验证合并回主网格（原位改写、不 SetD） |
+| `testMergeBackSharedEdge` | 验证共享边场景的合并 |
+| `testMarkCutEdges` | 验证切割边标为 FFp 自指屏障 |
+| `testPropagateExternal` | 验证缝边新顶点传播到外部邻接面 |
+| `testGrowNewMark` | 验证 newMark 容器扩容 |
+| `testRebuildCurFaces` | 验证 curFaces 重建 |
+| `testCutRegionPlumbing` | Phase 2.4 管线冒烟（真实 cutter） |
 
 ### 集成测试
 
@@ -231,11 +240,20 @@ testMarkSubRegions passed
 testInitNewMark passed
 testExtractBoundaryEdges passed
 testExtractBoundaryEdgesTwoTriangles passed
+testExtractLocalMesh passed
+testBuildCutInput passed
+testMergeBack passed
+testMergeBackSharedEdge passed
+testMarkCutEdges passed
+testPropagateExternal passed
+testGrowNewMark passed
+testRebuildCurFaces passed
+testCutRegionPlumbing passed
 testSplitMeshByMarkAndEdge passed
 testSplitMeshByMarkAndEdgeSameMark passed
 testIntegration passed
 
-All 21 tests passed!
+All 30 tests passed!
 ```
 
 ---

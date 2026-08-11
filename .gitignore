@@ -1,3 +1,5 @@
 /build
 /.vs
 /vcglib
+/out
+/build1
