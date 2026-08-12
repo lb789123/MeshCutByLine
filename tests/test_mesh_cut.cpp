@@ -259,6 +259,49 @@ void testConnectEdgesToPolylinesMultiple() {
     std::cout << "testConnectEdgesToPolylinesMultiple passed" << std::endl;
 }
 
+void testConnectEdgesToPolylinesDeduplicate()
+{
+    // 同一几何边被相邻面各记录一次（同向或反向），折线中不应出现回头重叠线段
+    MeshCutByMark::PolylineManager polylineManager;
+    CMeshOD mesh;
+
+    // Case 1: 同向重复记录只保留一条
+    std::vector<MeshCutByMark::CutEdge> duplicateEdges =
+    {
+        {0, 1, 0, 0, MeshCutByMark::CUT_EDGE_MARK_DIFF},
+        {0, 1, 1, 1, MeshCutByMark::CUT_EDGE_MARK_DIFF}
+    };
+    auto duplicatePolylines = polylineManager.connectEdgesToPolylines(duplicateEdges, &mesh);
+    assert(duplicatePolylines.size() == 1);
+    assert(duplicatePolylines[0].vertexIndices.size() == 2);
+
+    // Case 2: 反向记录同样只保留一条
+    std::vector<MeshCutByMark::CutEdge> oppositeEdges =
+    {
+        {0, 1, 0, 0, MeshCutByMark::CUT_EDGE_MARK_DIFF},
+        {1, 0, 1, 1, MeshCutByMark::CUT_EDGE_MARK_DIFF}
+    };
+    auto oppositePolylines = polylineManager.connectEdgesToPolylines(oppositeEdges, &mesh);
+    assert(oppositePolylines.size() == 1);
+    assert(oppositePolylines[0].vertexIndices.size() == 2);
+
+    // Case 3: 链条中间边重复时，保持 0-1-2，不出现 0-1-2-1 回头线
+    std::vector<MeshCutByMark::CutEdge> chainEdges =
+    {
+        {0, 1, 0, 0, MeshCutByMark::CUT_EDGE_MARK_DIFF},
+        {1, 2, 1, 0, MeshCutByMark::CUT_EDGE_MARK_DIFF},
+        {2, 1, 2, 1, MeshCutByMark::CUT_EDGE_MARK_DIFF}
+    };
+    auto chainPolylines = polylineManager.connectEdgesToPolylines(chainEdges, &mesh);
+    assert(chainPolylines.size() == 1);
+    assert(chainPolylines[0].vertexIndices.size() == 3);
+    assert(chainPolylines[0].vertexIndices[0] == 0);
+    assert(chainPolylines[0].vertexIndices[1] == 1);
+    assert(chainPolylines[0].vertexIndices[2] == 2);
+
+    std::cout << "testConnectEdgesToPolylinesDeduplicate passed" << std::endl;
+}
+
 void testConnectEdgesToPolylinesEmpty() {
     // Empty input should return empty output
     std::vector<MeshCutByMark::CutEdge> cutEdges;
@@ -616,16 +659,31 @@ void testBuildCutInput() {
     pl.startFaceIdx = 0; pl.startEdgeIdx = 0;
     pl.endFaceIdx = 0; pl.endEdgeIdx = 0;
 
-    auto ci = mgr.buildCutInput(pl, true, lm, &mesh);
-    assert(ci.line.size() == 2);
-    // 第一点 = 端点 v0
-    assert((ci.line[0] - mesh.vert[0].P()).Norm() < 1e-9);
-    // 方向 v0-v1 归一化
+    // 仅首端延长：切割输入 = 首端延长段 + 折线本体（2 个顶点）-> 共 3 点
+    auto ci = mgr.buildCutInput(pl, true, false, lm, &mesh);
+    // 切割输入 = 延长段 + 折线本体（2 个顶点）-> 共 3 点
+    assert(ci.line.size() == 3);
+    // 延长段起点 = v0 + 方向*L，方向 v0-v1 归一化
     vcg::Point3d D = (mesh.vert[0].P() - mesh.vert[1].P()); D.Normalize();
-    vcg::Point3d seg = ci.line[1] - ci.line[0]; seg.Normalize();
+    vcg::Point3d seg = ci.line[0] - ci.line[1]; seg.Normalize();
     assert((seg - D).Norm() < 1e-9);
+    // 折线本体：v0 -> v1
+    assert((ci.line[1] - mesh.vert[0].P()).Norm() < 1e-9);
+    assert((ci.line[2] - mesh.vert[1].P()).Norm() < 1e-9);
     // normal = 面法向 (0,0,1)
     assert(std::abs(ci.normal.Z() - 1.0) < 1e-9);
+
+    // 首尾两端都延长：切割输入 = 首端延长段 + 折线本体 + 尾端延长段 -> 共 4 点
+    auto ciBoth = mgr.buildCutInput(pl, true, true, lm, &mesh);
+    assert(ciBoth.line.size() == 4);
+    assert((ciBoth.line[1] - mesh.vert[0].P()).Norm() < 1e-9);
+    assert((ciBoth.line[2] - mesh.vert[1].P()).Norm() < 1e-9);
+    // 尾端延长方向 = v1 - v0 归一化
+    vcg::Point3d endDirection = mesh.vert[1].P() - mesh.vert[0].P();
+    endDirection.Normalize();
+    vcg::Point3d endSeg = ciBoth.line[3] - ciBoth.line[2];
+    endSeg.Normalize();
+    assert((endSeg - endDirection).Norm() < 1e-9);
     std::cout << "testBuildCutInput passed" << std::endl;
 }
 
@@ -1327,6 +1385,7 @@ int main() {
     testFindCutEdges();
     testConnectEdgesToPolylines();
     testConnectEdgesToPolylinesMultiple();
+    testConnectEdgesToPolylinesDeduplicate();
     testConnectEdgesToPolylinesEmpty();
     testMakeCutPlane();
     testMakeCutPlaneLongPolyline();

@@ -136,42 +136,28 @@ namespace MeshCutByMark
         // Track which edges have been used
         std::vector<bool> used(cutEdges.size(), false);
 
-        // NON_MANIFOLD: 记录已使用的边（canonical key），跳过反向边
-        std::unordered_map<std::pair<int, int>, int, EdgeHash, EdgeEqual> useEdges;
+        // 预扫描：同一几何边会被相邻面各记录一次（方向相反），
+        // 只保留第一条，其余重复记录提前标记为已使用，避免扩展时折返
+        std::unordered_map<std::pair<int, int>, int, EdgeHash, EdgeEqual> firstEdgeByKey;
+        for (int edgeIndex : edgeIndices)
+        {
+            std::pair<int, int> edgePair = {cutEdges[edgeIndex].v0, cutEdges[edgeIndex].v1};
+            auto foundEntry = firstEdgeByKey.find(edgePair);
+            if (foundEntry == firstEdgeByKey.end())
+            {
+                firstEdgeByKey[edgePair] = edgeIndex;
+            }
+            else
+            {
+                used[edgeIndex] = true;
+            }
+        }
 
         for (int edgeIndex : edgeIndices)
         {
             if (used[edgeIndex])
             {
                 continue;
-            }
-
-            // NON_MANIFOLD: 检查 canonical key 是否已使用
-            if (type == CUT_EDGE_NON_MANIFOLD)
-            {
-                std::pair<int, int> edgePair = {cutEdges[edgeIndex].v0, cutEdges[edgeIndex].v1};
-                std::pair<int, int> reverseEdgePair = {cutEdges[edgeIndex].v1, cutEdges[edgeIndex].v0};
-
-                if (useEdges.find(reverseEdgePair) != useEdges.end())
-                {
-                    continue;
-                }
-                useEdges[edgePair] = edgeIndex;
-
-                for (int innerEdgeIndex = 0; innerEdgeIndex < (int)cutEdges.size(); ++innerEdgeIndex)
-                {
-                    std::pair<int, int> innerEdgePair = {cutEdges[innerEdgeIndex].v0, cutEdges[innerEdgeIndex].v1};
-                    std::pair<int, int> innerReversePair = {cutEdges[innerEdgeIndex].v1, cutEdges[innerEdgeIndex].v0};
-
-                    if (useEdges.find(innerReversePair) != useEdges.end())
-                    {
-                        used[innerEdgeIndex] = true;
-                    }
-                    if (useEdges.find(innerEdgePair) != useEdges.end())
-                    {
-                        used[innerEdgeIndex] = true;
-                    }
-                }
             }
 
             Polyline polyline;
