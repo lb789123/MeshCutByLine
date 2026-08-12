@@ -299,6 +299,27 @@ void testConnectEdgesToPolylinesDeduplicate()
     assert(chainPolylines[0].vertexIndices[1] == 1);
     assert(chainPolylines[0].vertexIndices[2] == 2);
 
+    // Case 4: 反向重复记录混在链条中（2-7、2-3、3-2），不应出现 2-3-2-7 回头线
+    std::vector<MeshCutByMark::CutEdge> reverseChainEdges =
+    {
+        {2, 7, 0, 0, MeshCutByMark::CUT_EDGE_MARK_DIFF},
+        {2, 3, 1, 0, MeshCutByMark::CUT_EDGE_MARK_DIFF},
+        {3, 2, 2, 1, MeshCutByMark::CUT_EDGE_MARK_DIFF}
+    };
+    auto reverseChainPolylines = polylineManager.connectEdgesToPolylines(reverseChainEdges, &mesh);
+    assert(reverseChainPolylines.size() == 1);
+    assert(reverseChainPolylines[0].vertexIndices.size() == 3);
+    // 不允许出现相邻顶点重复（即回头折返）
+    for (int vertexIndex = 0; vertexIndex + 1 < (int)reverseChainPolylines[0].vertexIndices.size(); vertexIndex++)
+    {
+        assert(reverseChainPolylines[0].vertexIndices[vertexIndex] !=
+               reverseChainPolylines[0].vertexIndices[vertexIndex + 1]);
+    }
+    // 三个顶点必须是 2、3、7
+    std::vector<int> sortedVertices = reverseChainPolylines[0].vertexIndices;
+    std::sort(sortedVertices.begin(), sortedVertices.end());
+    assert(sortedVertices[0] == 2 && sortedVertices[1] == 3 && sortedVertices[2] == 7);
+
     std::cout << "testConnectEdgesToPolylinesDeduplicate passed" << std::endl;
 }
 

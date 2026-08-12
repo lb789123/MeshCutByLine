@@ -42,6 +42,7 @@ namespace MeshCutByMark
             int &currentVertex,
             const std::vector<CutEdge> &cutEdges,
             const std::unordered_map<int, std::vector<int>> &vertexToEdges,
+            const std::unordered_map<std::pair<int, int>, std::vector<int>, EdgeHash, EdgeEqual> &canonicalEdgeGroups,
             std::vector<bool> &used,
             bool forward);
 
@@ -130,18 +131,18 @@ namespace MeshCutByMark
             return polylines;
         }
 
-        // Build vertex -> edges mapping for this type
-        auto vertexToEdges = buildVertexToEdgesMap(cutEdges, edgeIndices);
-
         // Track which edges have been used
         std::vector<bool> used(cutEdges.size(), false);
 
         // 预扫描：同一几何边会被相邻面各记录一次（方向相反），
-        // 只保留第一条，其余重复记录提前标记为已使用，避免扩展时折返
+        // 只保留第一条，其余重复记录提前标记为已使用；
+        // 同时按几何边分组记录所有索引，供扩展时一并标记反向/重复边
         std::unordered_map<std::pair<int, int>, int, EdgeHash, EdgeEqual> firstEdgeByKey;
+        std::unordered_map<std::pair<int, int>, std::vector<int>, EdgeHash, EdgeEqual> canonicalEdgeGroups;
         for (int edgeIndex : edgeIndices)
         {
             std::pair<int, int> edgePair = {cutEdges[edgeIndex].v0, cutEdges[edgeIndex].v1};
+            canonicalEdgeGroups[edgePair].push_back(edgeIndex);
             auto foundEntry = firstEdgeByKey.find(edgePair);
             if (foundEntry == firstEdgeByKey.end())
             {
@@ -152,6 +153,17 @@ namespace MeshCutByMark
                 used[edgeIndex] = true;
             }
         }
+
+        // 邻接表只包含保留的边，反向/重复记录不再参与连接
+        std::vector<int> keptEdges;
+        for (int edgeIndex : edgeIndices)
+        {
+            if (!used[edgeIndex])
+            {
+                keptEdges.push_back(edgeIndex);
+            }
+        }
+        auto vertexToEdges = buildVertexToEdgesMap(cutEdges, keptEdges);
 
         for (int edgeIndex : edgeIndices)
         {
@@ -177,10 +189,10 @@ namespace MeshCutByMark
             polyline.endEdgeIdx = cutEdges[edgeIndex].edgeIdx;
 
             // Extend towards startVertex direction (prepend)
-            extendPolyline(polyline, startVertex, cutEdges, vertexToEdges, used, false);
+            extendPolyline(polyline, startVertex, cutEdges, vertexToEdges, canonicalEdgeGroups, used, false);
 
             // Extend towards endVertex direction (append)
-            extendPolyline(polyline, endVertex, cutEdges, vertexToEdges, used, true);
+            extendPolyline(polyline, endVertex, cutEdges, vertexToEdges, canonicalEdgeGroups, used, true);
 
             polylines.push_back(polyline);
         }
@@ -209,6 +221,7 @@ namespace MeshCutByMark
         int &currentVertex,
         const std::vector<CutEdge> &cutEdges,
         const std::unordered_map<int, std::vector<int>> &vertexToEdges,
+        const std::unordered_map<std::pair<int, int>, std::vector<int>, EdgeHash, EdgeEqual> &canonicalEdgeGroups,
         std::vector<bool> &used,
         bool forward)
     {
@@ -230,7 +243,17 @@ namespace MeshCutByMark
                     continue;
                 }
 
+                // 链接当前边时，把同一条几何边的反向/重复记录一并标记，防止折返
                 used[edgeIndex] = true;
+                std::pair<int, int> edgePair = {cutEdges[edgeIndex].v0, cutEdges[edgeIndex].v1};
+                auto groupIt = canonicalEdgeGroups.find(edgePair);
+                if (groupIt != canonicalEdgeGroups.end())
+                {
+                    for (int groupEdgeIndex : groupIt->second)
+                    {
+                        used[groupEdgeIndex] = true;
+                    }
+                }
 
                 int otherVertex = (cutEdges[edgeIndex].v0 == currentVertex) ? cutEdges[edgeIndex].v1 : cutEdges[edgeIndex].v0;
 
