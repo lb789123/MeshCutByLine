@@ -361,8 +361,8 @@ namespace MeshCutByMark
 			mesh->face[extG].SetD();
 		}
 
-		// 步骤 F：resize m_newMark、重建 curFaces、重算 FF。在 D 之前调用 FF，D 之后不改拓扑。
-		// 注意调用顺序：cutRegion 里先 finalizeTopology（重算 FF）→ 再 markCutEdges。
+		// 步骤 F1：resize m_newMark + 重算 FF/normal。在同步 local 区域标记之前调用。
+		// 注意调用顺序：cutRegion 里先 finalizeTopology（重算 FF）→ 再 propagateLocalRegionMarks。
 		void finalizeGrow(RegionMarker& regionMarker, CMeshOD* mesh)
 		{
 			// Grow mark storage and recompute face-face adjacency and normals
@@ -393,26 +393,76 @@ namespace MeshCutByMark
 			curFaces = result;
 		}
 
-		// 总装：对一个区域跑 A→B→cutter→C→E→F(FF)→D→F(curFaces)
+		// 把 AddCutLines 在 local mesh 上产生的区域标记（IMark）同步为全局 new-mark。
+		// 每个 local 区域标记首次出现时分配一个递增的全局 new-mark，同区域所有面共享。
+		void propagateLocalRegionMarks(
+			RegionMarker& regionMarker,
+			CMeshOD* mesh,
+			const LocalMesh& localMesh,
+			const MergeResult& merge,
+			int& newMarkCounter)
+		{
+			// local 区域标记 -> 全局 new-mark 的映射，避免与其他区域冲突
+			std::map<int, int> localMarkToGlobalMark;
+			const int numOriginFaces = static_cast<int>(localMesh.localFaceToGlobal.size());
+			for (int localFaceIndex = 0; localFaceIndex < (int)localMesh.mesh.face.size(); localFaceIndex++)
+			{
+				const CFaceOD& localFace = localMesh.mesh.face[localFaceIndex];
+				if (localFace.IsD())
+				{
+					continue;
+				}
+
+				// 原始面槽位按 localFaceToGlobal 映射；附加分片按 mergeBack 追加顺序映射
+				int globalFaceIndex = -1;
+				if (localFaceIndex < numOriginFaces)
+				{
+					globalFaceIndex = localMesh.localFaceToGlobal[localFaceIndex];
+				}
+				else
+				{
+					const int appendedIndex = localFaceIndex - numOriginFaces;
+					if (appendedIndex >= 0 && appendedIndex < (int)merge.newFaceGlobals.size())
+					{
+						globalFaceIndex = merge.newFaceGlobals[appendedIndex];
+					}
+				}
+				if (globalFaceIndex < 0 || globalFaceIndex >= (int)mesh->face.size() || mesh->face[globalFaceIndex].IsD())
+				{
+					continue;
+				}
+
+				const int localMark = localFace.IMark();
+				auto iterator = localMarkToGlobalMark.find(localMark);
+				if (iterator == localMarkToGlobalMark.end())
+				{
+					localMarkToGlobalMark[localMark] = newMarkCounter;
+					regionMarker.setNewMark(globalFaceIndex, newMarkCounter);
+					newMarkCounter++;
+				}
+				else
+				{
+					regionMarker.setNewMark(globalFaceIndex, iterator->second);
+				}
+			}
+		}
+
+		// 总装：对一个区域跑 A→B→cutter→C→E→F1→D(new)→F2(curFaces)
 		void cutRegion(
 			CMeshOD* mesh,
 			std::vector<int>& curFaces,
 			const std::vector<Polyline>& polylines,
 			int targetMark,
-			RegionMarker& regionMarker)
+			RegionMarker& regionMarker,
+			int& newMarkCounter)
 		{
 			// Cut one region: extract, cut dangling NON_MANIFOLD ends, merge back and finalize topology
 			LocalMesh localMesh;
 			extractLocalMesh(mesh, curFaces, localMesh);
 
-			// B + cutter：先收集所有需要延长的悬空端点（首端/尾端/两端），
-			// 再统一执行切割；cutLine 记录 local 新顶点下标，merge 后转 global 并把端点拼到最前。
-			struct PendingCut
-			{
-				int endpointGlobal;
-				std::vector<int> cutLineLocal;
-			};
-			std::vector<PendingCut> pending;
+			// B + cutter：先收集所有需要延长的悬空端点（首端/尾端/两端），再统一执行切割。
+			// AddCutLines 会完成切割并按“切割边不可跨越 + 已有标记”在 local mesh 上
+			// 重新标记区域，因此这里不再需要 cutLine 输出。
 			JasMeshAddCutLines cutter;
 
 			// 当前区域的边界顶点：非 NON_MANIFOLD 折线（MARK_DIFF/BOUNDARY 及合并折线）
@@ -444,39 +494,16 @@ namespace MeshCutByMark
 				const bool extendEnd =
 					boundaryVertices.count(polyline.vertexIndices.back()) == 0;
 
-				//按计划统一执行延长（首端、尾端、或两端都延长）
+				// 按计划统一执行延长（首端、尾端、或两端都延长）
 				auto cutInput = buildCutInput(polyline, extendStart, extendEnd, localMesh, mesh);
 
-				//切割
+				// 切割：区域标记由 AddCutLines 直接写入 localMesh.mesh 的面
 				std::vector<int> cutLine;
 				cutter.AddCutLines(&localMesh.mesh, cutInput.normal, cutInput.line, cutLine);
-				if (!cutLine.empty())
-				{
-					pending.push_back({ polyline.vertexIndices.front(), cutLine });
-				}
 			}
 
 			// C：merge 回主网格（新顶点此时 append 进 mesh，得到 vertLocalToGlobal）
 			MergeResult merge = mergeBack(mesh, localMesh, targetMark);
-
-			// cutLines：端点 global + 新顶点 global，拼成完整切割路径（spec D.1）
-			std::vector<std::vector<int>> cutLines;
-			for (const auto& pendingCut : pending)
-			{
-				std::vector<int> globalLine;
-				globalLine.push_back(pendingCut.endpointGlobal); // 端点（原顶点，global）
-				for (int localVertexIndex : pendingCut.cutLineLocal)
-				{
-					if (localVertexIndex >= 0 && localVertexIndex < (int)merge.vertLocalToGlobal.size())
-					{
-						globalLine.push_back(merge.vertLocalToGlobal[localVertexIndex]);
-					}
-				}
-				if (globalLine.size() >= 2)
-				{
-					cutLines.push_back(globalLine);
-				}
-			}
 
 			// E：外部加点（在重算 FF 之前）
 			propagateExternal(mesh, localMesh, merge);
@@ -484,8 +511,10 @@ namespace MeshCutByMark
 			// F1：resize m_newMark + 重算 FF/normal
 			finalizeGrow(regionMarker, mesh);
 
-			// D：标分割边（cutLines 已是 global 顶点）
-			markCutEdges(mesh, cutLines);
+			// D（新）：AddCutLines 已把切割边视为不可跨越并在 local mesh 上完成区域
+			// 拆分与重新标记；这里把 local 区域标记同步为全局 new-mark。
+			// 取代旧的 markCutEdges：不再用 FF 自指把切割边标成边界。
+			propagateLocalRegionMarks(regionMarker, mesh, localMesh, merge, newMarkCounter);
 
 			// F2：重建 curFaces
 			rebuildCurFaces(curFaces, mesh, merge);

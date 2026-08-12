@@ -514,18 +514,14 @@ void JasMeshMarkAndCutSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRe
         // 调试输出：折线
         debugWritePolylines(m_debugIterCounter, polylines);
 
-        // 2.4 从端点延长切割：局部 mesh + cutter + 合并回主网格（targetMark 在上文已定义）
-        m_localMeshCut.cutRegion(m_pMesh, curFaces, polylines, targetMark, m_regionMarker);
+        // 2.4 从端点延长切割：局部 mesh + cutter + 合并回主网格（targetMark 在上文已定义）。
+        //     AddCutLines 在 local mesh 上按“切割边不可跨越”完成区域拆分并重新标记，
+        //     cutRegion 会把这些 local 区域标记同步为全局 new-mark。
+        m_localMeshCut.cutRegion(
+            m_pMesh, curFaces, polylines, targetMark, m_regionMarker, m_newMarkCounter);
 
-        // 2.5 通过拣选得到切割后的子区域
-        std::vector<std::vector<int>> subRegions =
-            m_regionMarker.extractSubRegions(curFaces, m_pMesh);
-
-        // 调试输出：子区域
-        debugWriteSubRegionsOFF(m_debugIterCounter, subRegions);
-
-        // 2.6 每个子区域标记新 mark
-        m_regionMarker.markSubRegions(subRegions, m_pMesh, m_newMarkCounter);
+        // 2.5/2.6 已由 cutRegion 同步区域标记，不再需要基于 FF 自指的
+        //         extractSubRegions + markSubRegions。
 
         m_debugIterCounter++;
     }

@@ -2,6 +2,7 @@
 #include <iostream>
 #include <cassert>
 #include <algorithm>
+#include <set>
 #include "tool/edge_info.h"
 #include "tool/polyline.h"
 #include "tool/cut_plane.h"
@@ -1390,13 +1391,25 @@ void testCutRegionPlumbing() {
 	pl.endFaceIdx = 0;   pl.endEdgeIdx = 0;  // 端点不在 mark-diff 边 -> 触发切割
 
 	MeshCutByMark::LocalMeshCutManager mgr;
-	mgr.cutRegion(&mesh, curFaces, {pl}, /*targetMark*/1, rm);
+	int newMarkCounter = 1;
+	mgr.cutRegion(&mesh, curFaces, {pl}, /*targetMark*/1, rm, newMarkCounter);
 
 	// 真实 cutter 切割后拓扑保持连续：原始面槽位被替换/保留，不会 IsD。
 	// plumbing 只验证管线跑通与 curFaces 有效（切不动时保守 no-op 也合法）。
 	assert(curFaces.size() >= 2);
 	assert(!mesh.face[0].IsD());
 	assert(!mesh.face[1].IsD());
+
+	// AddCutLines 在 local mesh 上按“切割边不可跨越”完成区域拆分并重新标记，
+	// cutRegion 应把 local 区域标记同步为全局 new-mark：对角线切割后，
+	// curFaces 中每个面都被标记，且恰好分成两个不同区域。
+	std::set<int> regionMarks;
+	for (int faceIndex : curFaces)
+	{
+		assert(rm.getNewMark(faceIndex) > 0);
+		regionMarks.insert(rm.getNewMark(faceIndex));
+	}
+	assert(regionMarks.size() == 2);
 	std::cout << "testCutRegionPlumbing passed" << std::endl;
 }
 
