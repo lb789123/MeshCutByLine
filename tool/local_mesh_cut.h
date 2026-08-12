@@ -414,9 +414,23 @@ namespace MeshCutByMark
 			};
 			std::vector<PendingCut> pending;
 			JasMeshAddCutLines cutter;
-			MeshCutByMark::CutPlaneManager cutPlaneManager; // 复用 isOnMarkDiffEdge
 
-			// 对每条 NON_MANIFOLD 折线：判断首端/尾端是否悬空，统一执行延长切割
+			// 当前区域的边界顶点：非 NON_MANIFOLD 折线（MARK_DIFF/BOUNDARY 及合并折线）
+			// 的顶点，即落在区域边界上的顶点
+			std::set<int> boundaryVertices;
+			for (const auto& polyline : polylines)
+			{
+				if (polyline.type == CUT_EDGE_NON_MANIFOLD)
+				{
+					continue;
+				}
+				for (int vertexIndex : polyline.vertexIndices)
+				{
+					boundaryVertices.insert(vertexIndex);
+				}
+			}
+
+			// 对每条 NON_MANIFOLD 折线：判断首端/尾端顶点是否悬空，统一执行延长切割
 			for (const auto& polyline : polylines)
 			{
 				if (polyline.type != CUT_EDGE_NON_MANIFOLD)
@@ -424,11 +438,11 @@ namespace MeshCutByMark
 					continue;
 				}
 
-				// 判断首端/尾端是否需要延长（不在 mark 不同边上即悬空）
-				const bool extendStart = !cutPlaneManager.isOnMarkDiffEdge(
-					polyline.startFaceIdx, polyline.startEdgeIdx, mesh);
-				const bool extendEnd = !cutPlaneManager.isOnMarkDiffEdge(
-					polyline.endFaceIdx, polyline.endEdgeIdx, mesh);
+				// 首端/尾端顶点不在边界顶点集合中即悬空，需要延长
+				const bool extendStart =
+					boundaryVertices.count(polyline.vertexIndices.front()) == 0;
+				const bool extendEnd =
+					boundaryVertices.count(polyline.vertexIndices.back()) == 0;
 
 				//按计划统一执行延长（首端、尾端、或两端都延长）
 				auto cutInput = buildCutInput(polyline, extendStart, extendEnd, localMesh, mesh);
