@@ -2001,6 +2001,45 @@ void testStitchAllSeams()
 	std::cout << "testStitchAllSeams passed" << std::endl;
 }
 
+// 回归：prepareLocalCut 后局部网格按切割边分区标记
+void testPrepareLocalCutMarks()
+{
+	CMeshOD mesh;
+	vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
+	mesh.vert[0].P() = vcg::Point3d(0, 0, 0);
+	mesh.vert[1].P() = vcg::Point3d(2, 0, 0);
+	mesh.vert[2].P() = vcg::Point3d(0, 1, 0);
+	mesh.vert[3].P() = vcg::Point3d(2, 1, 0);
+	vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+	vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+	mesh.face.EnableFFAdjacency();
+	mesh.face.EnableMark();
+	mesh.vert.EnableMark();
+	vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+	vcg::tri::UpdateNormal<CMeshOD>::PerFace(mesh);
+	mesh.face[0].IMark() = 1;
+	mesh.face[1].IMark() = 1;
+
+	MeshCutByMark::Polyline polyline;
+	polyline.type = MeshCutByMark::CUT_EDGE_NON_MANIFOLD;
+	polyline.vertexIndices = { 0, 3 };
+	MeshCutByMark::LocalMeshCutManager manager;
+	MeshCutByMark::LocalCutResult result;
+	manager.prepareLocalCut(&mesh, { 0, 1 }, { polyline }, 1, result);
+
+	std::set<int> marks;
+	for (const auto& face : result.localMesh.face)
+	{
+		if (!face.IsD())
+		{
+			marks.insert(face.IMark());
+		}
+	}
+	std::cout << "prepareLocalCutMarks: distinctMarks=" << marks.size()
+		<< " liveFaces=" << result.localMesh.FN() << std::endl;
+	std::cout << "testPrepareLocalCutMarks passed" << std::endl;
+}
+
 int main() {
     testEdgeHash();
     testBuildEdgeInfo();
@@ -2039,5 +2078,6 @@ int main() {
     testPropagateExternalCoincident();
     testSeamPropagation();
     testStitchAllSeams();
+    testPrepareLocalCutMarks();
     return 0;
 }
