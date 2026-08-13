@@ -27,13 +27,27 @@ struct SeamCutLine
     std::vector<SeamCutPoint> points;
 };
 
+// 局部阶段的拼接边切点（尚未映射到全局顶点下标，供并行收集）。
+struct LocalSeam
+{
+    int localVertexA = -1;
+    int localVertexB = -1;
+    int externalFaceIndex = -1;  // 全局外部邻接面（extract 时已知）
+    std::vector<SeamCutPoint> points;
+};
+
 // 单个局部单元（flood-fill 得到的 curFaces）的切割结果。
-// 第 1 步仅收集数据，不改变现有切割行为；后续步骤再把它作为并行局部与
-// 全局合并之间的唯一交换结构。
+// 并行阶段只填局部数据；串行合并阶段再把局部缝边映射为全局缝边。
 struct LocalCutResult
 {
     std::vector<int> faceGlobals;      // 该局部单元涉及的全局面下标
-    std::vector<SeamCutLine> seams;    // 拼接边切点表
+    CMeshOD localMesh;                 // 切好的局部网格
+    std::vector<int> localToGlobalVert; // 原始顶点 local -> global
+    std::vector<int> localFaceToGlobal; // 原始面 local -> global
+    int Nv0 = 0;                       // 原始顶点数
+    int targetMark = 0;
+    std::vector<LocalSeam> localSeams; // 局部拼接边切点表
+    std::vector<SeamCutLine> seams;    // 合并阶段映射后的全局拼接边切点表
 };
 
 } // namespace MeshCutByMark

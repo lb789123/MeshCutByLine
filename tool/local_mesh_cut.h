@@ -609,6 +609,90 @@ namespace MeshCutByMark
 			}
 		}
 
+		// 收集局部阶段拼接边上的新顶点（尚未 merge，只记录局部下标与精确坐标）。
+		static void collectLocalSeams(const LocalMesh& lm, std::vector<LocalSeam>& localSeams)
+		{
+			std::map<std::pair<int, int>, LocalSeam> seamMap;
+			for (int localVertexIndex = lm.Nv0;
+				localVertexIndex < (int)lm.mesh.vert.size(); ++localVertexIndex)
+			{
+				if (lm.mesh.vert[localVertexIndex].IsD())
+				{
+					continue;
+				}
+				vcg::Point3d vertexPoint = lm.mesh.vert[localVertexIndex].P();
+				for (const auto& seamEntry : lm.seamExternal)
+				{
+					int localVertexA = seamEntry.first.first;
+					int localVertexB = seamEntry.first.second;
+					vcg::Point3d segmentPointA = lm.mesh.vert[localVertexA].P();
+					vcg::Point3d segmentPointB = lm.mesh.vert[localVertexB].P();
+					if (!pointOnSegment(vertexPoint, segmentPointA, segmentPointB))
+					{
+						continue;
+					}
+					if ((vertexPoint - segmentPointA).Norm() < 1e-9 ||
+						(vertexPoint - segmentPointB).Norm() < 1e-9)
+					{
+						continue; // 端点重合：不需要记录
+					}
+					vcg::Point3d segmentVectorAB = segmentPointB - segmentPointA;
+					double projectionParameter =
+						(vertexPoint - segmentPointA) * segmentVectorAB /
+						segmentVectorAB.SquaredNorm();
+					std::pair<int, int> seamKey =
+						std::minmax(localVertexA, localVertexB);
+					LocalSeam& seam = seamMap[seamKey];
+					seam.localVertexA = seamKey.first;
+					seam.localVertexB = seamKey.second;
+					seam.externalFaceIndex = seamEntry.second;
+					SeamCutPoint cutPoint;
+					cutPoint.localVertexIndex = localVertexIndex;
+					cutPoint.globalVertexIndex = -1;
+					cutPoint.t = projectionParameter;
+					cutPoint.point = vertexPoint;
+					seam.points.push_back(cutPoint);
+					break; // 一个新顶点只属于一条拼接边
+				}
+			}
+			for (auto& entry : seamMap)
+			{
+				localSeams.push_back(std::move(entry.second));
+			}
+		}
+
+		// 把局部拼接边切点映射为全局拼接边切点（合并阶段串行执行）。
+		static void convertLocalSeamsToGlobal(const LocalMesh& lm,
+			const MergeResult& merge, const std::vector<LocalSeam>& localSeams,
+			std::vector<SeamCutLine>& globalSeams)
+		{
+			for (const auto& localSeam : localSeams)
+			{
+				int globalVertexA =
+					localSeam.localVertexA < (int)lm.localToGlobalVert.size()
+					? lm.localToGlobalVert[localSeam.localVertexA] : -1;
+				int globalVertexB =
+					localSeam.localVertexB < (int)lm.localToGlobalVert.size()
+					? lm.localToGlobalVert[localSeam.localVertexB] : -1;
+				SeamCutLine seam;
+				seam.globalVertexA = std::min(globalVertexA, globalVertexB);
+				seam.globalVertexB = std::max(globalVertexA, globalVertexB);
+				seam.externalFaceIndex = localSeam.externalFaceIndex;
+				for (const auto& point : localSeam.points)
+				{
+					SeamCutPoint globalPoint = point;
+					if (point.localVertexIndex >= 0 &&
+						point.localVertexIndex < (int)merge.vertLocalToGlobal.size())
+					{
+						globalPoint.globalVertexIndex =
+							merge.vertLocalToGlobal[point.localVertexIndex];
+					}
+					seam.points.push_back(globalPoint);
+				}
+				globalSeams.push_back(std::move(seam));
+			}
+		}
+
 		// 步骤 F1：resize m_newMark + 重算 FF/normal。在同步 local 区域标记之前调用。
 		// 注意调用顺序：cutRegion 里先 finalizeTopology（重算 FF）→ 再 propagateLocalRegionMarks。
 		void finalizeGrow(RegionMarker& regionMarker, CMeshOD* mesh)
@@ -693,6 +777,78 @@ namespace MeshCutByMark
 					regionMarker.setNewMark(globalFaceIndex, iterator->second);
 				}
 			}
+		}
+
+		// 并行阶段：只做局部提取、批量切割和局部拼接边收集，不写全局 mesh。
+		void prepareLocalCut(CMeshOD* mesh, const std::vector<int>& curFaces,
+			const std::vector<Polyline>& polylines, int targetMark,
+			LocalCutResult& result)
+		{
+			LocalMesh localMesh;
+			extractLocalMesh(mesh, curFaces, localMesh);
+
+			std::set<int> boundaryVertices;
+			for (const auto& polyline : polylines)
+			{
+				if (polyline.type == CUT_EDGE_NON_MANIFOLD)
+				{
+					continue;
+				}
+				for (int vertexIndex : polyline.vertexIndices)
+				{
+					boundaryVertices.insert(vertexIndex);
+				}
+			}
+
+			std::vector<vcg::Point3d> normals;
+			std::vector<std::vector<vcg::Point3d>> lines;
+			for (const auto& polyline : polylines)
+			{
+				if (polyline.type != CUT_EDGE_NON_MANIFOLD)
+				{
+					continue;
+				}
+				const bool extendStart =
+					boundaryVertices.count(polyline.vertexIndices.front()) == 0;
+				const bool extendEnd =
+					boundaryVertices.count(polyline.vertexIndices.back()) == 0;
+				auto cutInput = buildCutInput(polyline, extendStart, extendEnd,
+					localMesh, mesh);
+				normals.push_back(cutInput.normal);
+				lines.push_back(std::move(cutInput.line));
+			}
+			std::vector<std::vector<int>> cutLines;
+			JasMeshAddCutLines cutter;
+			cutter.AddCutLinesBatch(&localMesh.mesh, normals, lines, cutLines);
+
+			collectLocalSeams(localMesh, result.localSeams);
+
+			result.localMesh = std::move(localMesh.mesh);
+			result.localToGlobalVert = std::move(localMesh.localToGlobalVert);
+			result.localFaceToGlobal = std::move(localMesh.localFaceToGlobal);
+			result.Nv0 = localMesh.Nv0;
+			result.faceGlobals = curFaces;
+			result.targetMark = targetMark;
+		}
+
+		// 串行阶段：把并行阶段算好的局部网格写回全局，并把局部拼接边映射为全局。
+		void mergeLocalCut(CMeshOD* mesh, LocalCutResult& result,
+			RegionMarker& regionMarker, int& newMarkCounter)
+		{
+			LocalMesh localMesh;
+			localMesh.mesh = std::move(result.localMesh);
+			localMesh.localToGlobalVert = std::move(result.localToGlobalVert);
+			localMesh.localFaceToGlobal = std::move(result.localFaceToGlobal);
+			localMesh.Nv0 = result.Nv0;
+
+			MergeResult merge = mergeBack(mesh, localMesh, result.targetMark);
+			convertLocalSeamsToGlobal(localMesh, merge, result.localSeams,
+				result.seams);
+			finalizeGrow(regionMarker, mesh);
+			propagateLocalRegionMarks(regionMarker, mesh, localMesh, merge,
+				newMarkCounter);
+			std::vector<int> curFaces = result.faceGlobals;
+			rebuildCurFaces(curFaces, mesh, merge);
 		}
 
 		// 总装：对一个区域跑 A→B→cutter→C→E→F1→D(new)→F2(curFaces)

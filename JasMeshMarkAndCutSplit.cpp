@@ -466,51 +466,56 @@ void JasMeshMarkAndCutSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRe
     // 计算法向量
     vcg::tri::UpdateNormal<CMeshOD>::PerFace(*m_pMesh);
 
-    // 收集所有局部单元的切割结果（局部阶段只收集拼接边切点，不立即改邻居）。
-    std::vector<MeshCutByMark::LocalCutResult> allLocalResults;
-
-    // Phase 2: 延长线切割并标记新区域
+    // 阶段 1：串行 flood-fill 收集所有区域任务（不切割，只标记区域已访问）。
+    struct RegionTask
+    {
+        int targetMark = 0;
+        std::vector<int> curFaces;
+        std::vector<MeshCutByMark::Polyline> polylines;
+    };
+    std::vector<RegionTask> regionTasks;
+    std::vector<char> visitedRegion(m_pMesh->face.size(), 0);
     for (int faceIndex = 0; faceIndex < (int)m_pMesh->face.size(); faceIndex++)
     {
-        if (m_pMesh->face[faceIndex].IsD())
+        if (m_pMesh->face[faceIndex].IsD() || visitedRegion[faceIndex])
         {
             continue;
         }
-        if (m_regionMarker.getNewMark(faceIndex) > 0)
+
+        int targetMark = m_pMesh->face[faceIndex].IMark();
+        std::vector<int> curFaces =
+            m_regionMarker.floodFill(faceIndex, targetMark, m_pMesh, m_edgeInfoManager);
+        for (int regionFaceIndex : curFaces)
         {
-            continue; // 已处理
+            visitedRegion[regionFaceIndex] = 1;
         }
 
-        // 2.1 flood-fill 找连通区域
-        int targetMark = m_pMesh->face[faceIndex].IMark();
-        std::vector<int> curFaces = m_regionMarker.floodFill(faceIndex, targetMark, m_pMesh, m_edgeInfoManager);
-
-        // 调试输出：flood-fill 区域
         debugWriteFacesOFF(m_debugIterCounter, "cur_faces", curFaces);
-
-        // 2.2 找 curFaces 的切割边
         std::vector<MeshCutByMark::CutEdge> cutEdges = findCutEdges(curFaces);
-
-        // 2.3 将切割边连接成连续折线
         std::vector<MeshCutByMark::Polyline> polylines =
             m_polylineManager.connectEdgesToPolylines(cutEdges, m_pMesh);
-
-        // 调试输出：折线
         debugWritePolylines(m_debugIterCounter, polylines);
 
-        // 2.4 从端点延长切割：局部 mesh + cutter + 合并回主网格（targetMark 在上文已定义）。
-        //     AddCutLines 在 local mesh 上按“切割边不可跨越”完成区域拆分并重新标记，
-        //     cutRegion 会把这些 local 区域标记同步为全局 new-mark。
-        MeshCutByMark::LocalCutResult localResult;
-        m_localMeshCut.cutRegion(
-            m_pMesh, curFaces, polylines, targetMark, m_regionMarker, m_newMarkCounter,
-            &localResult, /*stitchSeams=*/false);
-        allLocalResults.push_back(std::move(localResult));
-
-        // 2.5/2.6 已由 cutRegion 同步区域标记，不再需要基于 FF 自指的
-        //         extractSubRegions + markSubRegions。
-
+        regionTasks.push_back({ targetMark, std::move(curFaces), std::move(polylines) });
         m_debugIterCounter++;
+    }
+
+    // 阶段 2：局部独立切割（只读全局、写局部结果，可并行）。
+    std::vector<MeshCutByMark::LocalCutResult> allLocalResults;
+    allLocalResults.reserve(regionTasks.size());
+    for (const auto& task : regionTasks)
+    {
+        MeshCutByMark::LocalCutResult localResult;
+        m_localMeshCut.prepareLocalCut(m_pMesh, task.curFaces, task.polylines,
+            task.targetMark, localResult);
+        allLocalResults.push_back(std::move(localResult));
+    }
+
+    // 阶段 3：串行写回全局并同步 newMark。
+    for (auto& localResult : allLocalResults)
+    {
+        m_localMeshCut.mergeLocalCut(m_pMesh, localResult, m_regionMarker,
+            m_newMarkCounter);
     }
 
     // 统一缝合所有局部单元之间的拼接边：合并两侧切点顶点，对未切侧做纯分割，
