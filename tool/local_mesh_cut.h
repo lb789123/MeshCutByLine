@@ -13,6 +13,7 @@
 #include "region_marker.h"
 #include "cut_mesh.h"
 #include "cut_plane.h"
+#include "local_cut_result.h"
 #include <vcg/complex/algorithms/update/topology.h>
 #include <vcg/complex/algorithms/update/normal.h>
 
@@ -263,13 +264,14 @@ namespace MeshCutByMark
 
 		// 步骤 E：缝边上的新顶点 -> 把外部邻接面在加点处一分为二
 		// 注意：MergeResult 必须已声明（本方法定义在 MergeResult 之后）
-		void propagateExternal(CMeshOD* mesh, const LocalMesh& lm, const MergeResult& merge)
+		void propagateExternal(CMeshOD* mesh, const LocalMesh& lm, const MergeResult& merge,
+			LocalCutResult* result = nullptr)
 		{
 			// 收集每条缝边内部的新顶点（沿边参数 t 排序），同一缝边多个交点
 			// 必须一次分割；并维护“缝边 -> 外部邻接面”的可变映射，分割后把
 			// 其他指向同一外部面的缝边重定向到包含它的子面，保证后续顶点能
 			// 继续细分（否则外部面只被切一刀，其余位置留下裂缝）。
-			std::map<std::pair<int, int>, std::vector<std::pair<double, int>>> seamPoints;
+			std::map<std::pair<int, int>, std::vector<SeamCutPoint>> seamPoints;
 			for (int localVertexIndex = lm.Nv0; localVertexIndex < (int)lm.mesh.vert.size(); localVertexIndex++)
 			{
 				if (lm.mesh.vert[localVertexIndex].IsD())
@@ -309,7 +311,12 @@ namespace MeshCutByMark
 					vcg::Point3d segmentVectorAB = segmentPointB - segmentPointA;
 					double projectionParameter =
 						(vertexPoint - segmentPointA) * segmentVectorAB / segmentVectorAB.SquaredNorm();
-					seamPoints[{ localVertexA, localVertexB }].push_back({ projectionParameter, globalVertexIndex });
+					SeamCutPoint cutPoint;
+					cutPoint.localVertexIndex = localVertexIndex;
+					cutPoint.globalVertexIndex = globalVertexIndex;
+					cutPoint.t = projectionParameter;
+					cutPoint.point = vertexPoint;
+					seamPoints[{ localVertexA, localVertexB }].push_back(cutPoint);
 					break; // 该新顶点已处理
 				}
 			}
@@ -323,13 +330,17 @@ namespace MeshCutByMark
 				{
 					continue;
 				}
-				std::sort(points.begin(), points.end());
+				std::sort(points.begin(), points.end(),
+					[](const SeamCutPoint& lhs, const SeamCutPoint& rhs)
+					{
+						return lhs.t < rhs.t;
+					});
 				std::vector<int> splitVertices;
 				for (const auto& point : points)
 				{
-					if (splitVertices.empty() || splitVertices.back() != point.second)
+					if (splitVertices.empty() || splitVertices.back() != point.globalVertexIndex)
 					{
-						splitVertices.push_back(point.second);
+						splitVertices.push_back(point.globalVertexIndex);
 					}
 				}
 				if (splitVertices.empty())
@@ -347,6 +358,15 @@ namespace MeshCutByMark
 					? lm.localToGlobalVert[seamKey.first] : -1;
 				int globalVertexB = lm.localToGlobalVert.size() > (size_t)seamKey.second
 					? lm.localToGlobalVert[seamKey.second] : -1;
+
+				if (result != nullptr)
+				{
+					SeamCutLine seamLine;
+					seamLine.globalVertexA = std::min(globalVertexA, globalVertexB);
+					seamLine.globalVertexB = std::max(globalVertexA, globalVertexB);
+					seamLine.points = points; // 已按 t 排序
+					result->seams.push_back(std::move(seamLine));
+				}
 
 				std::vector<int> newSubFaces;
 				splitExternalFaceMulti(mesh, externalFaceIndex, globalVertexA, globalVertexB,
@@ -577,7 +597,8 @@ namespace MeshCutByMark
 			const std::vector<Polyline>& polylines,
 			int targetMark,
 			RegionMarker& regionMarker,
-			int& newMarkCounter)
+			int& newMarkCounter,
+			LocalCutResult* localResult = nullptr)
 		{
 			// Cut one region: extract, cut dangling NON_MANIFOLD ends, merge back and finalize topology
 			LocalMesh localMesh;
@@ -652,7 +673,7 @@ namespace MeshCutByMark
 			MergeResult merge = mergeBack(mesh, localMesh, targetMark);
 
 			// E：外部加点（在重算 FF 之前）
-			propagateExternal(mesh, localMesh, merge);
+			propagateExternal(mesh, localMesh, merge, localResult);
 
 			// F1：resize m_newMark + 重算 FF/normal
 			finalizeGrow(regionMarker, mesh);
