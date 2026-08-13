@@ -2028,15 +2028,12 @@ void testPrepareLocalCutMarks()
 	manager.prepareLocalCut(&mesh, { 0, 1 }, { polyline }, 1, result);
 
 	std::set<int> marks;
-	for (const auto& face : result.localMesh.face)
+	for (auto faceIndex : result.exact.mesh.faces())
 	{
-		if (!face.IsD())
-		{
-			marks.insert(face.IMark());
-		}
+		marks.insert(result.exact.face_mark_map[faceIndex]);
 	}
 	std::cout << "prepareLocalCutMarks: distinctMarks=" << marks.size()
-		<< " liveFaces=" << result.localMesh.FN() << std::endl;
+		<< " liveFaces=" << result.exact.mesh.number_of_faces() << std::endl;
 	std::cout << "testPrepareLocalCutMarks passed" << std::endl;
 }
 

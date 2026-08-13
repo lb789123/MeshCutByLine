@@ -6,6 +6,7 @@
 #include <map>
 #include <unordered_map>
 #include <set>
+#include <array>
 #include <tuple>
 #include <utility>
 #include <algorithm>
@@ -609,90 +610,6 @@ namespace MeshCutByMark
 			}
 		}
 
-		// 收集局部阶段拼接边上的新顶点（尚未 merge，只记录局部下标与精确坐标）。
-		static void collectLocalSeams(const LocalMesh& lm, std::vector<LocalSeam>& localSeams)
-		{
-			std::map<std::pair<int, int>, LocalSeam> seamMap;
-			for (int localVertexIndex = lm.Nv0;
-				localVertexIndex < (int)lm.mesh.vert.size(); ++localVertexIndex)
-			{
-				if (lm.mesh.vert[localVertexIndex].IsD())
-				{
-					continue;
-				}
-				vcg::Point3d vertexPoint = lm.mesh.vert[localVertexIndex].P();
-				for (const auto& seamEntry : lm.seamExternal)
-				{
-					int localVertexA = seamEntry.first.first;
-					int localVertexB = seamEntry.first.second;
-					vcg::Point3d segmentPointA = lm.mesh.vert[localVertexA].P();
-					vcg::Point3d segmentPointB = lm.mesh.vert[localVertexB].P();
-					if (!pointOnSegment(vertexPoint, segmentPointA, segmentPointB))
-					{
-						continue;
-					}
-					if ((vertexPoint - segmentPointA).Norm() < 1e-9 ||
-						(vertexPoint - segmentPointB).Norm() < 1e-9)
-					{
-						continue; // 端点重合：不需要记录
-					}
-					vcg::Point3d segmentVectorAB = segmentPointB - segmentPointA;
-					double projectionParameter =
-						(vertexPoint - segmentPointA) * segmentVectorAB /
-						segmentVectorAB.SquaredNorm();
-					std::pair<int, int> seamKey =
-						std::minmax(localVertexA, localVertexB);
-					LocalSeam& seam = seamMap[seamKey];
-					seam.localVertexA = seamKey.first;
-					seam.localVertexB = seamKey.second;
-					seam.externalFaceIndex = seamEntry.second;
-					SeamCutPoint cutPoint;
-					cutPoint.localVertexIndex = localVertexIndex;
-					cutPoint.globalVertexIndex = -1;
-					cutPoint.t = projectionParameter;
-					cutPoint.point = vertexPoint;
-					seam.points.push_back(cutPoint);
-					break; // 一个新顶点只属于一条拼接边
-				}
-			}
-			for (auto& entry : seamMap)
-			{
-				localSeams.push_back(std::move(entry.second));
-			}
-		}
-
-		// 把局部拼接边切点映射为全局拼接边切点（合并阶段串行执行）。
-		static void convertLocalSeamsToGlobal(const LocalMesh& lm,
-			const MergeResult& merge, const std::vector<LocalSeam>& localSeams,
-			std::vector<SeamCutLine>& globalSeams)
-		{
-			for (const auto& localSeam : localSeams)
-			{
-				int globalVertexA =
-					localSeam.localVertexA < (int)lm.localToGlobalVert.size()
-					? lm.localToGlobalVert[localSeam.localVertexA] : -1;
-				int globalVertexB =
-					localSeam.localVertexB < (int)lm.localToGlobalVert.size()
-					? lm.localToGlobalVert[localSeam.localVertexB] : -1;
-				SeamCutLine seam;
-				seam.globalVertexA = std::min(globalVertexA, globalVertexB);
-				seam.globalVertexB = std::max(globalVertexA, globalVertexB);
-				seam.externalFaceIndex = localSeam.externalFaceIndex;
-				for (const auto& point : localSeam.points)
-				{
-					SeamCutPoint globalPoint = point;
-					if (point.localVertexIndex >= 0 &&
-						point.localVertexIndex < (int)merge.vertLocalToGlobal.size())
-					{
-						globalPoint.globalVertexIndex =
-							merge.vertLocalToGlobal[point.localVertexIndex];
-					}
-					seam.points.push_back(globalPoint);
-				}
-				globalSeams.push_back(std::move(seam));
-			}
-		}
-
 		// 步骤 F1：resize m_newMark + 重算 FF/normal。在同步 local 区域标记之前调用。
 		// 注意调用顺序：cutRegion 里先 finalizeTopology（重算 FF）→ 再 propagateLocalRegionMarks。
 		void finalizeGrow(RegionMarker& regionMarker, CMeshOD* mesh)
@@ -784,9 +701,6 @@ namespace MeshCutByMark
 			const std::vector<Polyline>& polylines, int targetMark,
 			LocalCutResult& result)
 		{
-			LocalMesh localMesh;
-			extractLocalMesh(mesh, curFaces, localMesh);
-
 			std::set<int> boundaryVertices;
 			for (const auto& polyline : polylines)
 			{
@@ -798,6 +712,25 @@ namespace MeshCutByMark
 				{
 					boundaryVertices.insert(vertexIndex);
 				}
+			}
+
+			vcg::Box3d box;
+			for (int faceIndex : curFaces)
+			{
+				for (int edgeIndex = 0; edgeIndex < 3; edgeIndex++)
+				{
+					box.Add(mesh->face[faceIndex].V(edgeIndex)->P());
+				}
+			}
+			double diagonalLength = box.Diag();
+			if (diagonalLength < 1e-9)
+			{
+				diagonalLength = 1.0;
+			}
+			vcg::Point3d regionNormal = mesh->face[curFaces.front()].N();
+			if (regionNormal.Norm() < 1e-9)
+			{
+				regionNormal = vcg::Point3d(0, 0, 1);
 			}
 
 			std::vector<jaslmc::ExactPoint> normals;
@@ -812,51 +745,196 @@ namespace MeshCutByMark
 					boundaryVertices.count(polyline.vertexIndices.front()) == 0;
 				const bool extendEnd =
 					boundaryVertices.count(polyline.vertexIndices.back()) == 0;
-				auto cutInput = buildCutInput(polyline, extendStart, extendEnd,
-					localMesh, mesh);
-				normals.push_back(jaslmc::ExactPoint(
-					cutInput.normal.X(), cutInput.normal.Y(), cutInput.normal.Z()));
 				std::vector<jaslmc::ExactPoint> exactLine;
-				exactLine.reserve(cutInput.line.size());
-				for (const auto& point : cutInput.line)
+				if (extendStart)
 				{
+					vcg::Point3d direction =
+						mesh->vert[polyline.vertexIndices[0]].P() -
+						mesh->vert[polyline.vertexIndices[1]].P();
+					direction.Normalize();
+					vcg::Point3d point =
+						mesh->vert[polyline.vertexIndices.front()].P();
+					point += direction * diagonalLength;
 					exactLine.push_back(jaslmc::ExactPoint(
 						point.X(), point.Y(), point.Z()));
 				}
+				for (int vertexIndex : polyline.vertexIndices)
+				{
+					const auto& point = mesh->vert[vertexIndex].P();
+					exactLine.push_back(jaslmc::ExactPoint(
+						point.X(), point.Y(), point.Z()));
+				}
+				if (extendEnd)
+				{
+					int vertexCount = (int)polyline.vertexIndices.size();
+					vcg::Point3d direction =
+						mesh->vert[polyline.vertexIndices[vertexCount - 1]].P() -
+						mesh->vert[polyline.vertexIndices[vertexCount - 2]].P();
+					direction.Normalize();
+					vcg::Point3d point =
+						mesh->vert[polyline.vertexIndices.back()].P();
+					point += direction * diagonalLength;
+					exactLine.push_back(jaslmc::ExactPoint(
+						point.X(), point.Y(), point.Z()));
+				}
+				normals.push_back(jaslmc::ExactPoint(
+					regionNormal.X(), regionNormal.Y(), regionNormal.Z()));
 				lines.push_back(std::move(exactLine));
 			}
-			std::vector<std::vector<int>> cutLines;
-			JasMeshAddCutLines cutter;
-			cutter.AddCutLinesBatch(&localMesh.mesh, normals, lines, cutLines);
 
-			collectLocalSeams(localMesh, result.localSeams);
-
-			result.localMesh = std::move(localMesh.mesh);
-			result.localToGlobalVert = std::move(localMesh.localToGlobalVert);
-			result.localFaceToGlobal = std::move(localMesh.localFaceToGlobal);
-			result.Nv0 = localMesh.Nv0;
 			result.faceGlobals = curFaces;
 			result.targetMark = targetMark;
+			jaslmc::CutFacesExact(*mesh, curFaces, normals, lines, result.exact);
 		}
 
 		// 串行阶段：把并行阶段算好的局部网格写回全局，并把局部拼接边映射为全局。
 		void mergeLocalCut(CMeshOD* mesh, LocalCutResult& result,
 			RegionMarker& regionMarker, int& newMarkCounter)
 		{
-			LocalMesh localMesh;
-			localMesh.mesh = std::move(result.localMesh);
-			localMesh.localToGlobalVert = std::move(result.localToGlobalVert);
-			localMesh.localFaceToGlobal = std::move(result.localFaceToGlobal);
-			localMesh.Nv0 = result.Nv0;
+			const jaslmc::ExactCutResult& exact = result.exact;
 
-			MergeResult merge = mergeBack(mesh, localMesh, result.targetMark);
-			convertLocalSeamsToGlobal(localMesh, merge, result.localSeams,
-				result.seams);
+			std::map<jaslmc::ExactMesh::Vertex_index, int> vertex_to_global;
+			std::map<jaslmc::ExactPoint, int> new_point_to_index;
+			for (auto vertexIndex : exact.mesh.vertices())
+			{
+				int originalIndex = exact.vertex_global_map[vertexIndex];
+				if (originalIndex >= 0)
+				{
+					vertex_to_global[vertexIndex] = originalIndex;
+					continue;
+				}
+				jaslmc::ExactPoint point = exact.mesh.point(vertexIndex);
+				auto duplicate = new_point_to_index.find(point);
+				if (duplicate != new_point_to_index.end())
+				{
+					vertex_to_global[vertexIndex] = duplicate->second;
+					continue;
+				}
+				auto newVertex =
+					vcg::tri::Allocator<CMeshOD>::AddVertices(*mesh, 1);
+				newVertex->P() = vcg::Point3d(CGAL::to_double(point.x()),
+					CGAL::to_double(point.y()), CGAL::to_double(point.z()));
+				const int globalIndex = mesh->vn - 1;
+				vertex_to_global[vertexIndex] = globalIndex;
+				new_point_to_index[point] = globalIndex;
+			}
+
+			std::vector<int> newFaceGlobals;
+			std::map<jaslmc::ExactMesh::Face_index, int> exactFaceToGlobal;
+			for (auto faceIndex : exact.mesh.faces())
+			{
+				std::array<int, 3> globalVertices;
+				int corner = 0;
+				for (auto vertexIndex :
+					CGAL::vertices_around_face(exact.mesh.halfedge(faceIndex),
+						exact.mesh))
+				{
+					if (corner >= 3)
+					{
+						break;
+					}
+					globalVertices[corner++] =
+						vertex_to_global.at(vertexIndex);
+				}
+				if (corner != 3)
+				{
+					continue;
+				}
+				const int globalFaceIndex = exact.face_global_map[faceIndex];
+				if (globalFaceIndex >= 0 &&
+					globalFaceIndex < (int)mesh->face.size() &&
+					!mesh->face[globalFaceIndex].IsD())
+				{
+					mesh->face[globalFaceIndex].V(0) =
+						&mesh->vert[globalVertices[0]];
+					mesh->face[globalFaceIndex].V(1) =
+						&mesh->vert[globalVertices[1]];
+					mesh->face[globalFaceIndex].V(2) =
+						&mesh->vert[globalVertices[2]];
+					mesh->face[globalFaceIndex].IMark() =
+						exact.face_mark_map[faceIndex];
+					exactFaceToGlobal[faceIndex] = globalFaceIndex;
+				}
+				else
+				{
+					auto newFace =
+						vcg::tri::Allocator<CMeshOD>::AddFaces(*mesh, 1);
+					newFace->V(0) = &mesh->vert[globalVertices[0]];
+					newFace->V(1) = &mesh->vert[globalVertices[1]];
+					newFace->V(2) = &mesh->vert[globalVertices[2]];
+					newFace->IMark() = exact.face_mark_map[faceIndex];
+					exactFaceToGlobal[faceIndex] =
+						(int)mesh->face.size() - 1;
+					newFaceGlobals.push_back(exactFaceToGlobal[faceIndex]);
+				}
+			}
+
+			result.seams.clear();
+			for (const auto& seam : exact.seams)
+			{
+				SeamCutLine seamLine;
+				seamLine.globalVertexA = seam.global_vertex_a;
+				seamLine.globalVertexB = seam.global_vertex_b;
+				seamLine.externalFaceIndex = seam.external_face;
+				for (const auto& point : seam.points)
+				{
+					auto iterator =
+						vertex_to_global.find(point.local_vertex);
+					if (iterator == vertex_to_global.end())
+					{
+						continue;
+					}
+					SeamCutPoint cutPoint;
+					cutPoint.globalVertexIndex = iterator->second;
+					cutPoint.t = point.t;
+					cutPoint.point = vcg::Point3d(
+						CGAL::to_double(point.point.x()),
+						CGAL::to_double(point.point.y()),
+						CGAL::to_double(point.point.z()));
+					seamLine.points.push_back(cutPoint);
+				}
+				result.seams.push_back(std::move(seamLine));
+			}
+
 			finalizeGrow(regionMarker, mesh);
-			propagateLocalRegionMarks(regionMarker, mesh, localMesh, merge,
-				newMarkCounter);
-			std::vector<int> curFaces = result.faceGlobals;
-			rebuildCurFaces(curFaces, mesh, merge);
+
+			std::map<int, int> localMarkToGlobalMark;
+			for (const auto& entry : exactFaceToGlobal)
+			{
+				const int globalFaceIndex = entry.second;
+				if (globalFaceIndex < 0 ||
+					globalFaceIndex >= (int)mesh->face.size() ||
+					mesh->face[globalFaceIndex].IsD())
+				{
+					continue;
+				}
+				const int localMark = exact.face_mark_map[entry.first];
+				auto iterator = localMarkToGlobalMark.find(localMark);
+				if (iterator == localMarkToGlobalMark.end())
+				{
+					localMarkToGlobalMark[localMark] = newMarkCounter;
+					regionMarker.setNewMark(globalFaceIndex, newMarkCounter);
+					newMarkCounter++;
+				}
+				else
+				{
+					regionMarker.setNewMark(globalFaceIndex, iterator->second);
+				}
+			}
+
+			std::vector<int> curFaces;
+			for (int faceIndex : result.faceGlobals)
+			{
+				if (!mesh->face[faceIndex].IsD())
+				{
+					curFaces.push_back(faceIndex);
+				}
+			}
+			for (int faceIndex : newFaceGlobals)
+			{
+				curFaces.push_back(faceIndex);
+			}
+			result.faceGlobals = std::move(curFaces);
 		}
 
 		// 总装：对一个区域跑 A→B→cutter→C→E→F1→D(new)→F2(curFaces)
