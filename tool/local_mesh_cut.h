@@ -624,50 +624,26 @@ namespace MeshCutByMark
 				}
 			}
 
-			// 对每条 NON_MANIFOLD 折线：判断首端/尾端顶点是否悬空，统一执行延长切割
+			// 收集所有 NON_MANIFOLD 折线的延长切割输入，批量在 CGAL 精确网格会话中
+			// 一次构建、多刀累积、最后统一写回（避免每条折线重复 VCG<->CGAL 往返）。
+			std::vector<vcg::Point3d> normals;
+			std::vector<std::vector<vcg::Point3d>> lines;
 			for (const auto& polyline : polylines)
 			{
 				if (polyline.type != CUT_EDGE_NON_MANIFOLD)
 				{
 					continue;
 				}
-
-				// 首端/尾端顶点不在边界顶点集合中即悬空，需要延长
 				const bool extendStart =
 					boundaryVertices.count(polyline.vertexIndices.front()) == 0;
 				const bool extendEnd =
 					boundaryVertices.count(polyline.vertexIndices.back()) == 0;
-
-				// 按计划统一执行延长（首端、尾端、或两端都延长）
 				auto cutInput = buildCutInput(polyline, extendStart, extendEnd, localMesh, mesh);
-
-				// 切割：区域标记由 AddCutLines 直接写入 localMesh.mesh 的面
-				std::vector<int> cutLine;
-				cutter.AddCutLines(&localMesh.mesh, cutInput.normal, cutInput.line, cutLine);
-
-				// 保障每刀后 localMesh 保持流形：清理未被任何面引用的新顶点
-				// （>= Nv0，含上一刀创建、本刀折叠后变孤立的顶点），避免残留
-				// 同坐标重复顶点/孤立顶点。
-				std::vector<char> referencedVertices(localMesh.mesh.vert.size(), 0);
-				for (const auto& face : localMesh.mesh.face)
-				{
-					if (face.IsD())
-					{
-						continue;
-					}
-					for (int edgeIndex = 0; edgeIndex < 3; edgeIndex++)
-					{
-						referencedVertices[face.V(edgeIndex)->Index()] = 1;
-					}
-				}
-				for (int vertexIndex = localMesh.Nv0; vertexIndex < (int)localMesh.mesh.vert.size(); vertexIndex++)
-				{
-					if (!referencedVertices[vertexIndex])
-					{
-						localMesh.mesh.vert[vertexIndex].SetD();
-					}
-				}
+				normals.push_back(cutInput.normal);
+				lines.push_back(std::move(cutInput.line));
 			}
+			std::vector<std::vector<int>> cutLines;
+			cutter.AddCutLinesBatch(&localMesh.mesh, normals, lines, cutLines);
 
 			// C：merge 回主网格（新顶点此时 append 进 mesh，得到 vertLocalToGlobal）
 			MergeResult merge = mergeBack(mesh, localMesh, targetMark);
