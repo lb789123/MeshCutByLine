@@ -800,8 +800,8 @@ namespace MeshCutByMark
 				}
 			}
 
-			std::vector<vcg::Point3d> normals;
-			std::vector<std::vector<vcg::Point3d>> lines;
+			std::vector<jaslmc::ExactPoint> normals;
+			std::vector<std::vector<jaslmc::ExactPoint>> lines;
 			for (const auto& polyline : polylines)
 			{
 				if (polyline.type != CUT_EDGE_NON_MANIFOLD)
@@ -814,8 +814,16 @@ namespace MeshCutByMark
 					boundaryVertices.count(polyline.vertexIndices.back()) == 0;
 				auto cutInput = buildCutInput(polyline, extendStart, extendEnd,
 					localMesh, mesh);
-				normals.push_back(cutInput.normal);
-				lines.push_back(std::move(cutInput.line));
+				normals.push_back(jaslmc::ExactPoint(
+					cutInput.normal.X(), cutInput.normal.Y(), cutInput.normal.Z()));
+				std::vector<jaslmc::ExactPoint> exactLine;
+				exactLine.reserve(cutInput.line.size());
+				for (const auto& point : cutInput.line)
+				{
+					exactLine.push_back(jaslmc::ExactPoint(
+						point.X(), point.Y(), point.Z()));
+				}
+				lines.push_back(std::move(exactLine));
 			}
 			std::vector<std::vector<int>> cutLines;
 			JasMeshAddCutLines cutter;
