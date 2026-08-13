@@ -51,7 +51,17 @@ CMeshOD::~CMeshOD()
 	//no need to call base class destructor. It is called automatically
 }
 
-CMeshOD& CMeshOD::operator=(CMeshOD oth)
+CMeshOD& CMeshOD::operator=(const CMeshOD& oth)
+{
+	if (this != &oth)
+	{
+		CMeshOD temporary(oth);
+		swap(*this, temporary);
+	}
+	return *this;
+}
+
+CMeshOD& CMeshOD::operator=(CMeshOD&& oth)
 {
 	swap(*this, oth);
 	return *this;

@@ -136,7 +136,8 @@ public :
 
 	virtual ~CMeshOD();
 	
-	CMeshOD& operator=(CMeshOD oth);
+	CMeshOD& operator=(const CMeshOD& oth);
+	CMeshOD& operator=(CMeshOD&& oth);
 
 	friend void swap(CMeshOD& m1, CMeshOD& m2);
 	
