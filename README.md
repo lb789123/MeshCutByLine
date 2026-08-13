@@ -35,7 +35,7 @@
 | 切割边查找 | 从连通区域中找到所有切割边 |
 | 折线连接 | 将零散的切割边连接成连续折线 |
 | 切割平面构造 | 从折线端点构造切割平面 |
-| 区域标记 | flood-fill 找连通区域，标记新区域 |
+| 区域标记 | flood-fill 找连通区域；AddCutLines 按“切割边不可跨越”重标 local 区域，cutRegion 同步为全局 new-mark |
 | 边界边提取 | 从区域中提取边界边序列 |
 
 ---
@@ -80,14 +80,22 @@ Phase 2: 延长线切割并标记新区域
         // 将切割边连接成连续折线
         polylines = connectEdgesToPolylines(cutEdges)
         
-        // 从端点延长切割（仅 NON_MANIFOLD 折线悬空端点）：
-        // 提取局部 mesh → 外部 cutter（JasMeshAddCutLines::AddCutLines，
-        // cgalLocalMeshCut submodule，CGAL corefine）→ 合并回主网格
+        // cutRegion：提取局部 mesh → 逐条 NON_MANIFOLD 折线延长切割
+        // （外部 cutter：JasMeshAddCutLines::AddCutLines，cgalLocalMeshCut
+        // submodule，CGAL corefine）→ 合并回主网格 → 同步区域标记
         LocalMeshCutManager::cutRegion(curFaces, polylines, targetMark)
-        
-        // 拣选子区域并标记新 mark
-        subRegions = extractSubRegions(curFaces)
-        每个子区域标记新 mark（新1, 新2, 新3...）
+
+    cutRegion 内部：
+        1) extractLocalMesh       提取区域局部 mesh 并记录缝边 seamExternal
+        2) 逐条 NON_MANIFOLD 折线：悬空端点两端延长 → buildCutInput →
+           AddCutLines（corefine 切局部 mesh，按“切割边不可跨越”直接重标
+           区域；分片按 f:source 归属父面，零面积分片折叠，清理孤立顶点）
+        3) mergeBack              原位改写被切原面 + append 新分片（不 SetD）
+        4) propagateExternal      缝边新顶点传播到外部邻接面（纯分割：
+           同缝边多顶点一次分割，分割后更新缝边→邻居面映射，端点重合跳过）
+        5) finalizeGrow           扩容 newMark 存储 + 重算 FF/法向
+        6) propagateLocalRegionMarks  把 local 区域标记同步为全局 new-mark
+        7) rebuildCurFaces        重建 curFaces
 
 Phase 3: 根据新标记提取多边形
     按新标记分组所有三角形
@@ -144,17 +152,20 @@ struct splitReg {
 git submodule update --init --recursive
 ```
 
-### Windows（Ninja + MSVC）
+### Windows（MSVC）
 
 ```bash
 $env:BOOST_ROOT = 'D:\github\boost_1_91_0'   # 必须在配置前设置
-cmd /c '"C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat" -arch=x64 >nul 2>&1 && cmake -S . -B out/build/ninja -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_MAKE_PROGRAM="C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe" -DCGAL_DIR=D:/github/CGAL-6.1.1'
-cmd /c '"C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat" -arch=x64 >nul 2>&1 && cmake --build out/build/ninja --target test_mesh_cut -j 8'
+cmake -S . -B build -G "Visual Studio 17 2022" -DCGAL_DIR=D:/github/CGAL-6.1.1
+cmake --build build --config Release --target test_mesh_cut
 
 # 运行测试（GMP/MPFR 为动态库，需加入 PATH）
 $env:PATH = 'D:\github\CGAL-6.1.1\auxiliary\gmp\bin;' + $env:PATH
-.\out\build\ninja\test_mesh_cut.exe
+.\build\Release\test_mesh_cut.exe
 ```
+
+> 也可使用 Ninja 生成器：`-G Ninja -DCMAKE_BUILD_TYPE=Debug`（需 MSVC 环境，且
+> 用 Ninja 的 `-DCMAKE_MAKE_PROGRAM` 指向 VS 自带的 ninja.exe）。
 
 ### Linux/macOS
 
@@ -188,6 +199,7 @@ make -j$(nproc)
 | `testFindCutEdges` | 验证切割边查找（边界、非流形） |
 | `testConnectEdgesToPolylines` | 验证单条折线连接 |
 | `testConnectEdgesToPolylinesMultiple` | 验证多条折线连接 |
+| `testConnectEdgesToPolylinesDeduplicate` | 验证重复边去重与折线防回头 |
 | `testConnectEdgesToPolylinesEmpty` | 验证空输入 |
 | `testMakeCutPlane` | 验证切割平面构造 |
 | `testMakeCutPlaneLongPolyline` | 验证长折线的平面构造 |
@@ -210,6 +222,10 @@ make -j$(nproc)
 | `testGrowNewMark` | 验证 newMark 容器扩容 |
 | `testRebuildCurFaces` | 验证 curFaces 重建 |
 | `testCutRegionPlumbing` | Phase 2.4 管线冒烟（真实 cutter） |
+| `testCutRegionManyComplexPolylines` | 回归：多条复杂折线连续切割后网格保持流形（无重复/退化面、无非流形边/点、无重合顶点） |
+| `testCutRegionNonManifoldEdgeStability` | 回归：真实非流形边下 f:source 路径不崩溃、不丢已存在面 |
+| `testPropagateExternalCoincident` | 回归：缝边新顶点与端点重合时跳过分割（不产生退化面/重合顶点） |
+| `testSeamPropagation` | 回归：缝边切割新顶点在外部邻接面上被加点细分，同缝边多顶点与角场景均无裂缝 |
 
 ### 集成测试
 
@@ -253,7 +269,7 @@ testSplitMeshByMarkAndEdge passed
 testSplitMeshByMarkAndEdgeSameMark passed
 testIntegration passed
 
-All 30 tests passed!
+All 35 tests passed!
 ```
 
 ---
@@ -312,9 +328,8 @@ splitter.SetDebugOutputDir("my_debug_dir/");      // 可选：自定义输出目
 |------|------|------|----------|
 | `iter_N_cur_faces.off` | OFF | flood-fill 得到的连通区域 | Phase 2 每次迭代，步骤 2.1 后 |
 | `iter_N_polylines.obj` | OBJ | 折线（cut edges 连接成的连续折线） | Phase 2 每次迭代，步骤 2.3 后 |
-| `iter_N_sub_region_J.off` | OFF | 切割后的子区域 | Phase 2 每次迭代，步骤 2.5 后 |
 | `final_polygons.obj` | OBJ | 各区域的边界多边形 | Phase 3 结束后 |
-| `colored_mesh.obj` | OBJ | 带区域颜色的完整网格 | Phase 3 结束后 |
+| `colored_mesh.obj` + `colored_mesh.mtl` | OBJ+MTL | 按 NewMark 面颜色的完整网格（面级 usemtl 材质） | Phase 3 结束后 |
 
 其中 `N` 是主循环迭代编号，`J` 是子区域编号。
 
@@ -349,31 +364,46 @@ v x1 y1 z1
 f 1 2 3 4
 ```
 
-**OBJ 格式 - 带颜色网格**（顶点颜色）：
+**OBJ 格式 - 带颜色网格**（面颜色，OBJ + MTL）：
+
+`colored_mesh.obj`：
 ```
-v x y z r g b
-v x y z r g b
+mtllib colored_mesh.mtl
+v x y z
+v x y z
 ...
+usemtl newmark_1
 f v1 v2 v3
 ```
 
-颜色通过 `std::map<int, vcg::Color4b>` 管理，key 为区域索引，每个区域分配随机颜色。
+`colored_mesh.mtl`：
+```
+newmtl newmark_1
+Kd 0.29 0.33 0.32
+```
+
+颜色通过 `std::map<int, vcg::Color4b>` 管理，key 为 NewMark，每个区域分配随机颜色；
+面通过 `usemtl` 引用材质着色，不再输出顶点颜色。
 
 ---
 
 ## 已知限制
 
-1. **Phase 2.4 延长切割依赖外部 cutter**：已改为「提取局部 mesh → 外部 cutter（cgalLocalMeshCut submodule）→ 合并回主网格」管线；真实 cutter 为保守黑盒，切割线退化（沿边/过顶点/中点落边上）时可能 no-op，可接受
-2. **单边界环**：只存储第一个边界环，多孔区域会丢失信息
-3. **流形假设**：边界遍历假设网格是流形的
+1. **Phase 2.4 延长切割依赖外部 cutter**：真实 cutter（cgalLocalMeshCut submodule，CGAL corefine）为保守黑盒，切割线退化（沿边/过顶点/中点落边上）时可能 no-op，可接受
+2. **corefine 输入必须流形**：CGAL `Surface_mesh` 拒绝非流形边（`add_face` 失败丢面，`Cut3D` 计数）；非流形点（star vertex）会导致 corefine 断言崩溃（Debug）或访问冲突（Release）。因此 `cutRegion` 每刀后折叠零面积分片、按精确坐标合并新顶点、清理孤立顶点，保障局部 mesh 流形
+3. **缝边传播为纯分割**：`propagateExternal` 把缝边上的新顶点传播到外部邻接面，同缝边多顶点一次分割并更新「缝边→邻居面」映射，端点重合跳过；只分割、不新增边界
+4. **单边界环**：`boundlines` 只存储第一个边界环，多孔区域会丢失信息（完整环在 `splitReg::boundaries`）
+5. **流形假设**：边界遍历假设网格是流形的
 
 ---
 
 ## 未来改进
 
-- [x] Phase 2.4 延长切割：已改为局部 mesh + 外部 cutter 管线（plumbing 完成并通过桩验证；接入真实 cutter 属外部工作）
+- [x] Phase 2.4 延长切割：局部 mesh + 外部 cutter 管线，并接入真实 CGAL corefine
+- [x] 多折线连续切割流形保障：f:source 分片父面归属、零面积分片折叠、孤立顶点清理
+- [x] 缝边传播：propagateExternal 纯分割 + 邻居映射更新，接缝无裂缝
 - [ ] 支持多孔区域的边界提取
-- [ ] 添加非流形网格的处理
+- [ ] 非流形输入（非流形边/点）的预处理：劈开非流形边后再进 corefine
 - [ ] 优化性能（O(n²) 前插入 → O(n)）
 - [ ] 添加更多边界测试用例
 - [ ] 使用测试框架替代 raw assert
@@ -386,6 +416,9 @@ f v1 v2 v3
 
 ---
 
-## 作者
+## 作者与维护
 
 Claude (Anthropic) - 2026-07-21
+
+2026-08-13：按当前代码同步更新（cutRegion 一体化流程、f:source 分片父面、
+流形保障、缝边纯分割传播、面颜色调试输出、测试清单与构建命令）。

@@ -13,7 +13,7 @@
 | 折线 | OBJ (l 元素) | OBJ 原生支持线段，MeshLab 等工具可直接可视化 |
 | 三角形网格 | OFF | OFF 是最简单的三角形网格格式，易于解析 |
 | 多边形 | OBJ (f 元素) | OBJ 支持任意多边形面 |
-| 带颜色网格 | OBJ (v 含 rgb) | OBJ 顶点行可附带颜色信息 |
+| 带颜色网格 | OBJ + MTL | 面级 usemtl 材质（按 NewMark 着色） |
 
 **经验**：选择格式时优先考虑工具链支持（MeshLab、Blender 等），而非格式的完备性。
 
@@ -39,9 +39,10 @@ std::unordered_map<int, int> globalToLocal;
 ### 4. 颜色管理方案
 
 使用 `std::map<int, vcg::Color4b>` 管理区域颜色：
-- key 为 retRegs 数组索引（而非 newMark），因为索引是连续的
+- key 为 `splitReg::newMark`，每个区域（NewMark）一种颜色
 - 随机颜色避免固定调色板在区域数多时重复
-- 面颜色转换为顶点颜色时取相邻面平均值，避免接缝处突变
+- 输出采用面级颜色：OBJ + MTL（每个 NewMark 一个材质，面通过 `usemtl` 引用），
+  不再输出顶点颜色，避免接缝处颜色平均造成区域边界模糊
 
 **经验**：随机颜色虽然每次运行不同，但同一运行内各区域颜色唯一，足够用于调试。
 
@@ -78,7 +79,7 @@ void debugWriteXxx(...) {
 在算法关键步骤后立即输出：
 - flood-fill 后 → 输出连通区域
 - 折线连接后 → 输出折线
-- 子区域提取后 → 输出子区域
+- 切割（cutRegion）后 → 区域重标由 AddCutLines 在 local mesh 完成，不再单独输出子区域文件
 - 最终结果 → 输出边界多边形和带颜色网格
 
 **经验**：输出时机应选择在数据结构完整但未被后续修改的时刻，确保输出内容与算法状态一致。
@@ -100,12 +101,13 @@ OFF
 顶点数 面数 0    # 第三个数是边数，通常为 0
 ```
 
-### 3. 面颜色转顶点颜色
+### 3. 面颜色输出（OBJ + MTL）
 
-VCGlib 的面颜色是 `Color4b`（0-255），输出为浮点颜色需要除以 255：
+VCGlib 的面颜色是 `Color4b`（0-255），写入 MTL 的 `Kd` 需除以 255 转 0~1：
 ```cpp
-vertColors[vi].X() += fc.X() / 255.0f;
+materialStream << "Kd " << (color.X() / 255.0f) << " " << ...;
 ```
+OBJ 面行通过 `usemtl newmark_N` 引用材质；顶点行只写坐标，不写颜色。
 
 ### 4. 多边形 OBJ 的全局偏移
 
