@@ -2053,13 +2053,14 @@ void testCutFacesExact()
 	mesh.vert.EnableMark();
 	vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
 	mesh.face[0].IMark() = 1;
-	mesh.face[1].IMark() = 2;
+	mesh.face[1].IMark() = 1;
 
 	std::vector<jaslmc::ExactPoint> normals = { jaslmc::ExactPoint(0, 0, 1) };
 	std::vector<std::vector<jaslmc::ExactPoint>> lines = {
-		{ jaslmc::ExactPoint(-1, -1, 0), jaslmc::ExactPoint(1, 1, 0) } };
+		{ jaslmc::ExactPoint(-2, -1, 0), jaslmc::ExactPoint(0, 0, 0),
+		  jaslmc::ExactPoint(2, 1, 0), jaslmc::ExactPoint(4, 2, 0) } };
 	jaslmc::ExactCutResult result;
-	bool ok = jaslmc::CutFacesExact(mesh, { 0 }, normals, lines, result);
+	bool ok = jaslmc::CutFacesExact(mesh, { 0, 1 }, normals, lines, result);
 
 	std::set<int> marks;
 	for (auto face_index : result.mesh.faces())
