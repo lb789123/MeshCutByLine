@@ -265,7 +265,7 @@ namespace MeshCutByMark
 		// 步骤 E：缝边上的新顶点 -> 把外部邻接面在加点处一分为二
 		// 注意：MergeResult 必须已声明（本方法定义在 MergeResult 之后）
 		void propagateExternal(CMeshOD* mesh, const LocalMesh& lm, const MergeResult& merge,
-			LocalCutResult* result = nullptr)
+			LocalCutResult* result = nullptr, bool stitch = true)
 		{
 			// 收集每条缝边内部的新顶点（沿边参数 t 排序），同一缝边多个交点
 			// 必须一次分割；并维护“缝边 -> 外部邻接面”的可变映射，分割后把
@@ -364,8 +364,14 @@ namespace MeshCutByMark
 					SeamCutLine seamLine;
 					seamLine.globalVertexA = std::min(globalVertexA, globalVertexB);
 					seamLine.globalVertexB = std::max(globalVertexA, globalVertexB);
+					seamLine.externalFaceIndex = externalFaceIndex;
 					seamLine.points = points; // 已按 t 排序
 					result->seams.push_back(std::move(seamLine));
+				}
+
+				if (!stitch)
+				{
+					continue;
 				}
 
 				std::vector<int> newSubFaces;
@@ -598,7 +604,8 @@ namespace MeshCutByMark
 			int targetMark,
 			RegionMarker& regionMarker,
 			int& newMarkCounter,
-			LocalCutResult* localResult = nullptr)
+			LocalCutResult* localResult = nullptr,
+			bool stitchSeams = true)
 		{
 			// Cut one region: extract, cut dangling NON_MANIFOLD ends, merge back and finalize topology
 			LocalMesh localMesh;
@@ -649,7 +656,7 @@ namespace MeshCutByMark
 			MergeResult merge = mergeBack(mesh, localMesh, targetMark);
 
 			// E：外部加点（在重算 FF 之前）
-			propagateExternal(mesh, localMesh, merge, localResult);
+			propagateExternal(mesh, localMesh, merge, localResult, stitchSeams);
 
 			// F1：resize m_newMark + 重算 FF/normal
 			finalizeGrow(regionMarker, mesh);

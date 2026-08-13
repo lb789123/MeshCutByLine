@@ -23,6 +23,7 @@ struct SeamCutLine
 {
     int globalVertexA = -1;      // 拼接边端点（规范化，小下标在前）
     int globalVertexB = -1;
+    int externalFaceIndex = -1;  // 拼接边对面的全局邻接面（缝合阶段细分它）
     std::vector<SeamCutPoint> points;
 };
 
