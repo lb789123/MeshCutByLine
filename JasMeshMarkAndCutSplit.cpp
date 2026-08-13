@@ -4,6 +4,7 @@
 #include <vcg/complex/algorithms/update/normal.h>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <set>
 #include <map>
 #include <utility>
@@ -500,15 +501,24 @@ void JasMeshMarkAndCutSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRe
         m_debugIterCounter++;
     }
 
-    // 阶段 2：局部独立切割（只读全局、写局部结果，可并行）。
-    std::vector<MeshCutByMark::LocalCutResult> allLocalResults;
-    allLocalResults.reserve(regionTasks.size());
-    for (const auto& task : regionTasks)
+    // 阶段 2：局部独立切割（只读全局、写独立局部结果，并行执行）。
+    std::vector<MeshCutByMark::LocalCutResult> allLocalResults(regionTasks.size());
+    std::vector<std::future<void>> futures;
+    for (size_t taskIndex = 0; taskIndex < regionTasks.size(); ++taskIndex)
     {
-        MeshCutByMark::LocalCutResult localResult;
-        m_localMeshCut.prepareLocalCut(m_pMesh, task.curFaces, task.polylines,
-            task.targetMark, localResult);
-        allLocalResults.push_back(std::move(localResult));
+        futures.push_back(std::async(std::launch::async,
+            [this, &regionTasks, &allLocalResults, taskIndex]()
+            {
+                m_localMeshCut.prepareLocalCut(m_pMesh,
+                    regionTasks[taskIndex].curFaces,
+                    regionTasks[taskIndex].polylines,
+                    regionTasks[taskIndex].targetMark,
+                    allLocalResults[taskIndex]);
+            }));
+    }
+    for (auto& future : futures)
+    {
+        future.get();
     }
 
     // 阶段 3：串行写回全局并同步 newMark。
