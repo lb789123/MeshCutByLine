@@ -197,16 +197,18 @@ namespace MeshCutByMark
 
 			// 1) append 所有新顶点（local >= Nv0）到 *mesh*，一次性批量加（避免多次 realloc）
 			int newVertexCount = static_cast<int>(lm.mesh.vert.size()) - lm.Nv0;
-			int firstNewGlobalVertex = static_cast<int>(mesh->vert.size());
-			if (newVertexCount > 0)
-			{
-				vcg::tri::Allocator<CMeshOD>::AddVertices(*mesh, newVertexCount);
-			}
 			result.vertLocalToGlobal = lm.localToGlobalVert; // < Nv0 部分
 			for (int newVertexIndex = 0; newVertexIndex < newVertexCount; newVertexIndex++)
 			{
-				mesh->vert[firstNewGlobalVertex + newVertexIndex].P() = lm.mesh.vert[lm.Nv0 + newVertexIndex].P();
-				result.vertLocalToGlobal.push_back(firstNewGlobalVertex + newVertexIndex);
+				// 已被 AddCutLines 清理（折叠后无面引用）的顶点不 append，占位 -1 保持映射对齐
+				if (lm.mesh.vert[lm.Nv0 + newVertexIndex].IsD())
+				{
+					result.vertLocalToGlobal.push_back(-1);
+					continue;
+				}
+				vcg::tri::Allocator<CMeshOD>::AddVertices(*mesh, 1);
+				mesh->vert.back().P() = lm.mesh.vert[lm.Nv0 + newVertexIndex].P();
+				result.vertLocalToGlobal.push_back(static_cast<int>(mesh->vert.size()) - 1);
 			}
 
 			// 2) 遍历 local 面
@@ -268,6 +270,10 @@ namespace MeshCutByMark
 			// 对每个新顶点（local >= Nv0）：判断是否落在某条缝边上
 			for (int localVertexIndex = lm.Nv0; localVertexIndex < (int)lm.mesh.vert.size(); localVertexIndex++)
 			{
+				if (lm.mesh.vert[localVertexIndex].IsD())
+				{
+					continue; // 已被清理的孤立顶点不参与外部加点
+				}
 				vcg::Point3d vertexPoint = lm.mesh.vert[localVertexIndex].P();
 				// 找它落在哪条缝边（local 顶点对）上
 				for (const auto& seamEntry : lm.seamExternal)
@@ -295,6 +301,15 @@ namespace MeshCutByMark
 					// 外部面的三个顶点，找出缝边两端的 global 下标
 					int globalVertexA = lm.localToGlobalVert.size() > (size_t)localVertexA ? lm.localToGlobalVert[localVertexA] : -1;
 					int globalVertexB = lm.localToGlobalVert.size() > (size_t)localVertexB ? lm.localToGlobalVert[localVertexB] : -1;
+					// 新顶点与缝边端点重合：外部面已经共享该端点，再分割只会
+					// 产生退化面/重合顶点（非流形点），直接跳过，保持纯分割语义。
+					if (globalVertexIndex == globalVertexA ||
+						globalVertexIndex == globalVertexB ||
+						(vertexPoint - segmentPointA).Norm() < 1e-9 ||
+						(vertexPoint - segmentPointB).Norm() < 1e-9)
+					{
+						continue;
+					}
 					splitExternalFace(mesh, externalFaceIndex, globalVertexA, globalVertexB, globalVertexIndex);
 					break; // 该新顶点已处理
 				}
@@ -500,6 +515,29 @@ namespace MeshCutByMark
 				// 切割：区域标记由 AddCutLines 直接写入 localMesh.mesh 的面
 				std::vector<int> cutLine;
 				cutter.AddCutLines(&localMesh.mesh, cutInput.normal, cutInput.line, cutLine);
+
+				// 保障每刀后 localMesh 保持流形：清理未被任何面引用的新顶点
+				// （>= Nv0，含上一刀创建、本刀折叠后变孤立的顶点），避免残留
+				// 同坐标重复顶点/孤立顶点。
+				std::vector<char> referencedVertices(localMesh.mesh.vert.size(), 0);
+				for (const auto& face : localMesh.mesh.face)
+				{
+					if (face.IsD())
+					{
+						continue;
+					}
+					for (int edgeIndex = 0; edgeIndex < 3; edgeIndex++)
+					{
+						referencedVertices[face.V(edgeIndex)->Index()] = 1;
+					}
+				}
+				for (int vertexIndex = localMesh.Nv0; vertexIndex < (int)localMesh.mesh.vert.size(); vertexIndex++)
+				{
+					if (!referencedVertices[vertexIndex])
+					{
+						localMesh.mesh.vert[vertexIndex].SetD();
+					}
+				}
 			}
 
 			// C：merge 回主网格（新顶点此时 append 进 mesh，得到 vertLocalToGlobal）
