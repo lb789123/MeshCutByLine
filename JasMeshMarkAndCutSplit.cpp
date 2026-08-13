@@ -6,6 +6,7 @@
 #include <fstream>
 #include <set>
 #include <map>
+#include <utility>
 #include <cstdlib>
 #include <ctime>
 
@@ -465,6 +466,9 @@ void JasMeshMarkAndCutSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRe
     // 计算法向量
     vcg::tri::UpdateNormal<CMeshOD>::PerFace(*m_pMesh);
 
+    // 收集所有局部单元的切割结果（局部阶段只收集拼接边切点，不立即改邻居）。
+    std::vector<MeshCutByMark::LocalCutResult> allLocalResults;
+
     // Phase 2: 延长线切割并标记新区域
     for (int faceIndex = 0; faceIndex < (int)m_pMesh->face.size(); faceIndex++)
     {
@@ -497,14 +501,23 @@ void JasMeshMarkAndCutSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRe
         // 2.4 从端点延长切割：局部 mesh + cutter + 合并回主网格（targetMark 在上文已定义）。
         //     AddCutLines 在 local mesh 上按“切割边不可跨越”完成区域拆分并重新标记，
         //     cutRegion 会把这些 local 区域标记同步为全局 new-mark。
+        MeshCutByMark::LocalCutResult localResult;
         m_localMeshCut.cutRegion(
-            m_pMesh, curFaces, polylines, targetMark, m_regionMarker, m_newMarkCounter);
+            m_pMesh, curFaces, polylines, targetMark, m_regionMarker, m_newMarkCounter,
+            &localResult, /*stitchSeams=*/false);
+        allLocalResults.push_back(std::move(localResult));
 
         // 2.5/2.6 已由 cutRegion 同步区域标记，不再需要基于 FF 自指的
         //         extractSubRegions + markSubRegions。
 
         m_debugIterCounter++;
     }
+
+    // 统一缝合所有局部单元之间的拼接边：合并两侧切点顶点，对未切侧做纯分割，
+    // 消除接缝裂缝；缝合后重算 FF/法向。
+    m_localMeshCut.stitchAllSeams(m_pMesh, allLocalResults);
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(*m_pMesh);
+    vcg::tri::UpdateNormal<CMeshOD>::PerFace(*m_pMesh);
 
     // Phase 3: 根据新标记提取多边形
     std::map<int, std::vector<int>> markToFaces;

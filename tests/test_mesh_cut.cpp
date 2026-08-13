@@ -1924,6 +1924,83 @@ void testSeamPropagation()
 	std::cout << "testSeamPropagation passed" << std::endl;
 }
 
+// 回归：stitchAllSeams 合并两侧缝边切点，消除双侧裂缝
+void testStitchAllSeams()
+{
+	CMeshOD mesh;
+	vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 6);
+	mesh.vert[0].P() = vcg::Point3d(0, 0, 0);
+	mesh.vert[1].P() = vcg::Point3d(2, 0, 0);
+	mesh.vert[2].P() = vcg::Point3d(0, 1, 0);
+	mesh.vert[3].P() = vcg::Point3d(2, 1, 0);
+	mesh.vert[4].P() = vcg::Point3d(1, 0.5, 0);
+	mesh.vert[5].P() = vcg::Point3d(1, 0.5, 0);
+	// A 侧 face0 已被切割成 (1,4,0),(4,2,0)
+	vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[4], &mesh.vert[0]);
+	vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[4], &mesh.vert[2], &mesh.vert[0]);
+	// B 侧 face1 已被切割成 (2,5,3),(5,1,3)
+	vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[2], &mesh.vert[5], &mesh.vert[3]);
+	vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[5], &mesh.vert[1], &mesh.vert[3]);
+	mesh.face.EnableMark();
+	for (int faceIndex = 0; faceIndex < 2; faceIndex++)
+	{
+		mesh.face[faceIndex].IMark() = 1;
+	}
+	for (int faceIndex = 2; faceIndex < 4; faceIndex++)
+	{
+		mesh.face[faceIndex].IMark() = 2;
+	}
+
+	MeshCutByMark::LocalCutResult resultA;
+	MeshCutByMark::SeamCutLine seamA;
+	seamA.globalVertexA = 1;
+	seamA.globalVertexB = 2;
+	seamA.externalFaceIndex = 3;
+	MeshCutByMark::SeamCutPoint pointA;
+	pointA.globalVertexIndex = 4;
+	pointA.point = vcg::Point3d(1, 0.5, 0);
+	seamA.points.push_back(pointA);
+	resultA.seams.push_back(seamA);
+
+	MeshCutByMark::LocalCutResult resultB;
+	MeshCutByMark::SeamCutLine seamB;
+	seamB.globalVertexA = 1;
+	seamB.globalVertexB = 2;
+	seamB.externalFaceIndex = 0;
+	MeshCutByMark::SeamCutPoint pointB;
+	pointB.globalVertexIndex = 5;
+	pointB.point = vcg::Point3d(1, 0.5, 0);
+	seamB.points.push_back(pointB);
+	resultB.seams.push_back(seamB);
+
+	MeshCutByMark::LocalMeshCutManager::stitchAllSeams(&mesh, { resultA, resultB });
+
+	std::map<std::pair<int, int>, int> edgeCount;
+	for (const auto& face : mesh.face)
+	{
+		if (face.IsD())
+		{
+			continue;
+		}
+		for (int edgeIndex = 0; edgeIndex < 3; edgeIndex++)
+		{
+			int vertexA = face.V(edgeIndex)->Index();
+			int vertexB = face.V((edgeIndex + 1) % 3)->Index();
+			edgeCount[std::minmax(vertexA, vertexB)]++;
+		}
+	}
+	int boundaryEdges = 0;
+	for (const auto& entry : edgeCount)
+	{
+		if (entry.second == 1)
+		{
+			boundaryEdges++;
+		}
+	}
+	std::cout << "stitchAllSeams: boundaryEdges=" << boundaryEdges << std::endl;
+	std::cout << "testStitchAllSeams passed" << std::endl;
+}
+
 int main() {
     testEdgeHash();
     testBuildEdgeInfo();
@@ -1961,5 +2038,6 @@ int main() {
     // testTempStarVertexCorefine();  // 临时跳过（该场景 Release 下会崩溃）
     testPropagateExternalCoincident();
     testSeamPropagation();
+    testStitchAllSeams();
     return 0;
 }

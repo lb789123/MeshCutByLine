@@ -6,6 +6,7 @@
 #include <map>
 #include <unordered_map>
 #include <set>
+#include <tuple>
 #include <utility>
 #include <algorithm>
 #include "cmesh.h"
@@ -508,6 +509,104 @@ namespace MeshCutByMark
 			}
 			// 原 extG 标记删除（按下标，安全）
 			mesh->face[extG].SetD();
+		}
+
+		// 统一缝合：聚合所有局部单元的拼接边切点，按坐标把两侧切点合并为同一个
+		// 全局顶点，重写全局面引用，再对每条拼接边的两侧外部邻接面做纯分割。
+		static void stitchAllSeams(CMeshOD* mesh, const std::vector<LocalCutResult>& results)
+		{
+			std::map<std::tuple<double, double, double>, int> pointToVertex;
+			std::map<int, int> mergeVertex; // 旧全局顶点 -> 保留的全局顶点
+			std::map<std::pair<int, int>, std::vector<int>> seamSplitVertices;
+			std::map<std::pair<int, int>, std::set<int>> seamExternalFaces;
+
+			for (const auto& result : results)
+			{
+				for (const auto& seam : result.seams)
+				{
+					const std::pair<int, int> seamKey =
+						std::minmax(seam.globalVertexA, seam.globalVertexB);
+					if (seam.externalFaceIndex >= 0)
+					{
+						seamExternalFaces[seamKey].insert(seam.externalFaceIndex);
+					}
+					for (const auto& point : seam.points)
+					{
+						const auto coordKey = std::make_tuple(
+							point.point.X(), point.point.Y(), point.point.Z());
+						auto iterator = pointToVertex.find(coordKey);
+						if (iterator == pointToVertex.end())
+						{
+							pointToVertex[coordKey] = point.globalVertexIndex;
+							seamSplitVertices[seamKey].push_back(point.globalVertexIndex);
+						}
+						else if (point.globalVertexIndex != iterator->second)
+						{
+							mergeVertex[point.globalVertexIndex] = iterator->second;
+						}
+					}
+				}
+			}
+
+			if (!mergeVertex.empty())
+			{
+				for (auto& face : mesh->face)
+				{
+					if (face.IsD())
+					{
+						continue;
+					}
+					for (int edgeIndex = 0; edgeIndex < 3; edgeIndex++)
+					{
+						int vertexIndex = face.V(edgeIndex)->Index();
+						auto iterator = mergeVertex.find(vertexIndex);
+						while (iterator != mergeVertex.end())
+						{
+							vertexIndex = iterator->second;
+							iterator = mergeVertex.find(vertexIndex);
+						}
+						face.V(edgeIndex) = &mesh->vert[vertexIndex];
+					}
+				}
+			}
+
+			for (const auto& entry : seamSplitVertices)
+			{
+				const std::pair<int, int> seamKey = entry.first;
+				std::vector<int> splitVertices;
+				std::set<int> seenSplitVertices;
+				for (int vertexIndex : entry.second)
+				{
+					if (seenSplitVertices.insert(vertexIndex).second)
+					{
+						splitVertices.push_back(vertexIndex);
+					}
+				}
+				if (splitVertices.empty())
+				{
+					continue;
+				}
+				for (int externalFaceIndex : seamExternalFaces[seamKey])
+				{
+					if (externalFaceIndex < 0 ||
+						externalFaceIndex >= (int)mesh->face.size() ||
+						mesh->face[externalFaceIndex].IsD())
+					{
+						continue;
+					}
+					// 若该邻接面已经被另一侧区域切割，缝边已分段，只靠上面的
+					// 顶点合并即可；若仍以 (A,B) 为完整边，说明该侧未被切割，
+					// 需要按最终切点做纯分割。
+					if (!faceHasEdge(mesh, externalFaceIndex,
+						seamKey.first, seamKey.second))
+					{
+						continue;
+					}
+					std::vector<int> newSubFaces;
+					splitExternalFaceMulti(mesh, externalFaceIndex, seamKey.first,
+						seamKey.second, splitVertices, newSubFaces);
+				}
+			}
 		}
 
 		// 步骤 F1：resize m_newMark + 重算 FF/normal。在同步 local 区域标记之前调用。
