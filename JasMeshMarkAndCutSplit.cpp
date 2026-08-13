@@ -378,90 +378,70 @@ void JasMeshMarkAndCutSplit::debugSaveColoredMesh(const std::vector<splitReg>& r
         m_pMesh->face.EnableColor();
     }
 
-    // 为每个区域生成随机颜色，用 map 管理（区域索引 -> 颜色）
-    std::map<int, vcg::Color4b> colorMap;
+    // 每个区域的 NewMark 分配一种颜色（newMark -> 颜色）
+    std::map<int, vcg::Color4b> newMarkColorMap;
     std::srand(static_cast<unsigned>(std::time(nullptr)));
-    for (int regionIndex = 0; regionIndex < (int)regs.size(); regionIndex++)
+    for (const auto& region : regs)
     {
         unsigned char red = static_cast<unsigned char>(std::rand() % 256);
         unsigned char green = static_cast<unsigned char>(std::rand() % 256);
         unsigned char blue = static_cast<unsigned char>(std::rand() % 256);
-        colorMap[regionIndex] = vcg::Color4b(red, green, blue, 255);
+        newMarkColorMap[region.newMark] = vcg::Color4b(red, green, blue, 255);
     }
 
-    // 给每个区域的三角形赋颜色
-    for (int regionIndex = 0; regionIndex < (int)regs.size(); regionIndex++)
+    // 给每个区域的三角形赋面颜色（内存中的面颜色，便于查看）
+    for (const auto& region : regs)
     {
-        for (int faceIndex : regs[regionIndex].inTris)
+        const vcg::Color4b& regionColor = newMarkColorMap[region.newMark];
+        for (int faceIndex : region.inTris)
         {
-            m_pMesh->face[faceIndex].C() = colorMap[regionIndex];
+            m_pMesh->face[faceIndex].C() = regionColor;
         }
     }
 
-    // 保存带颜色的 OBJ（顶点颜色 = 所属面颜色的平均）
-    std::string path = m_debugOutputDir + "colored_mesh.obj";
-    std::ofstream ofs(path);
-    if (!ofs.is_open())
+    // 输出面颜色 OBJ：每个 NewMark 一个 MTL 材质，面级 usemtl，不再输出顶点颜色
+    std::string objectPath = m_debugOutputDir + "colored_mesh.obj";
+    std::string materialPath = m_debugOutputDir + "colored_mesh.mtl";
+    std::ofstream objectStream(objectPath);
+    if (!objectStream.is_open())
+    {
+        return;
+    }
+    std::ofstream materialStream(materialPath);
+    if (!materialStream.is_open())
     {
         return;
     }
 
-    // 计算顶点颜色：每个顶点取相邻面颜色的平均
-    int vertexCount = m_pMesh->VN();
-    int faceCount = m_pMesh->FN();
-    std::vector<vcg::Point4f> vertColors(vertexCount, vcg::Point4f(0, 0, 0, 0));
-    std::vector<int> vertFaceCount(vertexCount, 0);
-
-    for (int faceIndex = 0; faceIndex < faceCount; faceIndex++)
-    {
-        if (m_pMesh->face[faceIndex].IsD())
-        {
-            continue;
-        }
-        vcg::Color4b faceColor = m_pMesh->face[faceIndex].C();
-        for (int cornerIndex = 0; cornerIndex < 3; cornerIndex++)
-        {
-            int vertexIndex = m_pMesh->face[faceIndex].V(cornerIndex)->Index();
-            vertColors[vertexIndex].X() += faceColor.X() / 255.0f;
-            vertColors[vertexIndex].Y() += faceColor.Y() / 255.0f;
-            vertColors[vertexIndex].Z() += faceColor.Z() / 255.0f;
-            vertFaceCount[vertexIndex]++;
-        }
-    }
-
-    for (int vertexIndex = 0; vertexIndex < vertexCount; vertexIndex++)
-    {
-        if (vertFaceCount[vertexIndex] > 0)
-        {
-            vertColors[vertexIndex].X() /= vertFaceCount[vertexIndex];
-            vertColors[vertexIndex].Y() /= vertFaceCount[vertexIndex];
-            vertColors[vertexIndex].Z() /= vertFaceCount[vertexIndex];
-        }
-    }
-
-    // 写入 OBJ（带顶点颜色）
-    for (int vertexIndex = 0; vertexIndex < vertexCount; vertexIndex++)
+    objectStream << "mtllib colored_mesh.mtl\n";
+    for (int vertexIndex = 0; vertexIndex < (int)m_pMesh->vert.size(); vertexIndex++)
     {
         const auto& point = m_pMesh->vert[vertexIndex].P();
-        ofs << "v " << point.X() << " " << point.Y() << " " << point.Z()
-            << " " << vertColors[vertexIndex].X()
-            << " " << vertColors[vertexIndex].Y()
-            << " " << vertColors[vertexIndex].Z() << "\n";
+        objectStream << "v " << point.X() << " " << point.Y() << " " << point.Z() << "\n";
     }
 
-    for (int faceIndex = 0; faceIndex < faceCount; faceIndex++)
+    for (const auto& entry : newMarkColorMap)
     {
-        if (m_pMesh->face[faceIndex].IsD())
-        {
-            continue;
-        }
-        ofs << "f"
-            << " " << (m_pMesh->face[faceIndex].V(0)->Index() + 1)
-            << " " << (m_pMesh->face[faceIndex].V(1)->Index() + 1)
-            << " " << (m_pMesh->face[faceIndex].V(2)->Index() + 1) << "\n";
+        vcg::Color4b color = entry.second;
+        materialStream << "newmtl newmark_" << entry.first << "\n";
+        materialStream << "Kd " << (color.X() / 255.0f) << " "
+            << (color.Y() / 255.0f) << " " << (color.Z() / 255.0f) << "\n";
     }
 
-    ofs.close();
+    for (const auto& region : regs)
+    {
+        objectStream << "usemtl newmark_" << region.newMark << "\n";
+        for (int faceIndex : region.inTris)
+        {
+            const auto& face = m_pMesh->face[faceIndex];
+            objectStream << "f " << (face.V(0)->Index() + 1)
+                << " " << (face.V(1)->Index() + 1)
+                << " " << (face.V(2)->Index() + 1) << "\n";
+        }
+    }
+
+    objectStream.close();
+    materialStream.close();
 }
 
 // 主流程：按 mark 与切割边将网格分割为简单多边形
