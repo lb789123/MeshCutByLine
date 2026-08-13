@@ -2040,6 +2040,43 @@ void testPrepareLocalCutMarks()
 	std::cout << "testPrepareLocalCutMarks passed" << std::endl;
 }
 
+// 回归：CutFacesExact 直接从全局面集构建 ExactMesh、切割、分区并收集缝边
+void testCutFacesExact()
+{
+	CMeshOD mesh;
+	vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
+	mesh.vert[0].P() = vcg::Point3d(0, 0, 0);
+	mesh.vert[1].P() = vcg::Point3d(2, 0, 0);
+	mesh.vert[2].P() = vcg::Point3d(0, 1, 0);
+	mesh.vert[3].P() = vcg::Point3d(2, 1, 0);
+	vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+	vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+	mesh.face.EnableFFAdjacency();
+	mesh.face.EnableMark();
+	mesh.vert.EnableMark();
+	vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+	mesh.face[0].IMark() = 1;
+	mesh.face[1].IMark() = 2;
+
+	std::vector<jaslmc::ExactPoint> normals = { jaslmc::ExactPoint(0, 0, 1) };
+	std::vector<std::vector<jaslmc::ExactPoint>> lines = {
+		{ jaslmc::ExactPoint(-1, -1, 0), jaslmc::ExactPoint(1, 1, 0) } };
+	jaslmc::ExactCutResult result;
+	bool ok = jaslmc::CutFacesExact(mesh, { 0 }, normals, lines, result);
+
+	std::set<int> marks;
+	for (auto face_index : result.mesh.faces())
+	{
+		marks.insert(result.face_mark_map[face_index]);
+	}
+	std::cout << "cutFacesExact: ok=" << ok
+		<< " faces=" << result.mesh.number_of_faces()
+		<< " distinctMarks=" << marks.size()
+		<< " seams=" << result.seams.size()
+		<< " dropped=" << result.dropped_input_face_count << std::endl;
+	std::cout << "testCutFacesExact passed" << std::endl;
+}
+
 int main() {
     testEdgeHash();
     testBuildEdgeInfo();
@@ -2079,5 +2116,6 @@ int main() {
     testSeamPropagation();
     testStitchAllSeams();
     testPrepareLocalCutMarks();
+    testCutFacesExact();
     return 0;
 }
