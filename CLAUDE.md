@@ -34,14 +34,11 @@ CMake 3.18+ required (submodule's CMakeLists). MSVC `/utf-8` for Chinese comment
 `JasMeshMarkAndCutSplit::SplitMeshByMarkAndEdge()` runs three phases:
 
 - **Phase 1 - Edge Classification** (`tool/edge_info.h`): `EdgeInfoManager` builds edge->face map and classifies edges: `CUT_EDGE_NONE`, `CUT_EDGE_MARK_DIFF`, `CUT_EDGE_NON_MANIFOLD` (3+ faces), `CUT_EDGE_BOUNDARY` (1 face).
-- **Phase 2 - Cut and Mark** (`tool/region_marker.h`, `tool/polyline.h`, `tool/local_mesh_cut.h`): `RegionMarker` flood-fills same-mark regions; `PolylineManager` connects cut edges into polylines; `LocalMeshCutManager::cutRegion` processes all `NON_MANIFOLD` polylines of one region:
-  1. `extractLocalMesh` - extract the region and record seam edges (`seamExternal`).
-  2. For each dangling `NON_MANIFOLD` polyline, `buildCutInput` extends both ends and `AddCutLines` corefines the local mesh; `AddCutLines` directly re-marks the region (cut edges impassable) and cleans orphan vertices after each cut.
-  3. `mergeBack` - rewrite split originals in place, append new pieces, skip deleted vertices (no `SetD` on region faces).
-  4. `propagateExternal` - split external neighbor faces at new seam vertices (pure split: all points on one seam edge are applied in one pass, the seam->neighbor map is updated after each split, endpoint-coincident vertices are skipped).
-  5. `finalizeGrow` - grow new-mark storage, recompute FF/normals.
-  6. `propagateLocalRegionMarks` - sync local region marks to global new-marks (replaces the old `markCutEdges` flow).
-  7. `rebuildCurFaces`.
+- **Phase 2 - Local Cut and Stitch** (`tool/region_marker.h`, `tool/polyline.h`, `tool/local_mesh_cut.h`, submodule `cgalLocalMeshCut`): `RegionMarker` flood-fills same-mark regions; `PolylineManager` connects cut edges into polylines. The pipeline is split into two stages:
+  1. Collect tasks (serial): flood-fill each mark region into `curFaces` + polylines.
+  2. `prepareLocalCut` (parallel, read-only on the global mesh): builds an `ExactMesh` directly from the face set (`jaslmc::CutFacesExact`), extends each dangling `NON_MANIFOLD` polyline with exact coordinates (`ExactPoint`), cuts per line and re-marks `f:mark` on the exact mesh (`SplitExactMeshByCut`); collects seam cut points. No `CMeshOD` intermediate.
+  3. `mergeLocalCut` (serial): writes the `ExactMesh` back to the global mesh (append vertices, rewrite/append faces with `IMark=f:mark`), maps seam points to global vertices, assigns global new-marks.
+  4. `stitchAllSeams` (serial): merges both sides' seam cut points by exact coordinates into one global vertex, pure-splits uncut external neighbor faces (`splitExternalFaceMulti`); new sub-faces inherit `IMark` and newMark.
 - **Phase 3 - Extract Polygons**: groups faces by `newMark` and extracts boundary loops via `jaslmc::SubRegionBoundary` (outer loop first, holes after).
 
 Output: `std::vector<splitReg>` with `mark`, `newMark`, `inTris`, `normal`, `boundlines` (first loop) and `boundaries` (all loops).

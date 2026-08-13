@@ -72,38 +72,41 @@ Phase 1: 构建边信息
     遍历所有三角形，建立边→面的映射
     分类每条边：mark不同 / 非流形 / 边界 / 普通
 
-Phase 2: 延长线切割并标记新区域
-    for each 未标记新 mark 的面 i:
-        curFaces = floodFill(i, sameMark, notCrossCutEdge)
-        cutEdges = findCutEdges(curFaces)
-        
-        // 将切割边连接成连续折线
-        polylines = connectEdgesToPolylines(cutEdges)
-        
-        // cutRegion：提取局部 mesh → 逐条 NON_MANIFOLD 折线延长切割
-        // （外部 cutter：JasMeshAddCutLines::AddCutLines，cgalLocalMeshCut
-        // submodule，CGAL corefine）→ 合并回主网格 → 同步区域标记
-        LocalMeshCutManager::cutRegion(curFaces, polylines, targetMark)
+Phase 2: 局部独立切割 + 统一缝合（两阶段）
+    阶段 1（串行）：收集区域任务
+        for each 未访问面 i:
+            curFaces = floodFill(i, sameMark, notCrossCutEdge)
+            cutEdges = findCutEdges(curFaces)
+            polylines = connectEdgesToPolylines(cutEdges)
+            regionTasks.push_back(targetMark, curFaces, polylines)
 
-    cutRegion 内部：
-        1) extractLocalMesh       提取区域局部 mesh 并记录缝边 seamExternal
-        2) 逐条 NON_MANIFOLD 折线：悬空端点两端延长 → buildCutInput →
-           AddCutLines（corefine 切局部 mesh，按“切割边不可跨越”直接重标
-           区域；分片按 f:source 归属父面，零面积分片折叠，清理孤立顶点）
-        3) mergeBack              原位改写被切原面 + append 新分片（不 SetD）
-        4) propagateExternal      缝边新顶点传播到外部邻接面（纯分割：
-           同缝边多顶点一次分割，分割后更新缝边→邻居面映射，端点重合跳过）
-        5) finalizeGrow           扩容 newMark 存储 + 重算 FF/法向
-        6) propagateLocalRegionMarks  把 local 区域标记同步为全局 new-mark
-        7) rebuildCurFaces        重建 curFaces
+    阶段 2（可并行）：局部独立切割（只读全局，不写全局）
+        对每个区域任务 → prepareLocalCut：
+            - 从全局面集直接构建 ExactMesh（jaslmc::CutFacesExact），
+              面带 f:mark / f:global / v:g，记录缝边与外部邻接面；
+            - 折线两端延长，切割线用精确坐标点 ExactPoint；
+            - 每条折线 CGAL corefine 后在 ExactMesh 上按“切割边不可
+              跨越”重新分区 f:mark（SplitExactMeshByCut）；
+            - 输出 LocalCutResult：切好分区的 ExactMesh + 全局映射 +
+              缝边切点（精确坐标），局部阶段完全不用 CMeshOD。
+
+    阶段 3（串行）：mergeLocalCut 写回全局
+        - 从 ExactMesh 写回：新顶点 append、原面重写/新面追加、
+          IMark=f:mark；
+        - 局部缝边切点映射为全局顶点；
+        - 分配全局 newMark（local mark -> global newMark）。
+
+    阶段 4（串行）：stitchAllSeams 统一缝合
+        - 按精确坐标合并缝边两侧切点为同一全局顶点；
+        - 对未切侧的外部邻接面做纯分割（splitExternalFaceMulti），
+          新子面继承原面的 IMark 与 newMark；
+        - 重算 FF/法向。
 
 Phase 3: 根据新标记提取多边形
-    按新标记分组所有三角形
-    对每组提取边界边 → 形成简单闭合多边形
+    按 newMark 分组所有三角形
+    多边形法向取组内三角形法向累加（与内部三角形一致）
+    对每组提取边界环（第 0 圈外圈，其余为洞）
 ```
-
----
-
 ## 数据结构
 
 ### 切割边类型
@@ -226,6 +229,10 @@ make -j$(nproc)
 | `testCutRegionNonManifoldEdgeStability` | 回归：真实非流形边下 f:source 路径不崩溃、不丢已存在面 |
 | `testPropagateExternalCoincident` | 回归：缝边新顶点与端点重合时跳过分割（不产生退化面/重合顶点） |
 | `testSeamPropagation` | 回归：缝边切割新顶点在外部邻接面上被加点细分，同缝边多顶点与角场景均无裂缝 |
+| `testStitchAllSeams` | 回归：统一缝合合并两侧缝边切点，消除双侧裂缝 |
+| `testPrepareLocalCutMarks` | 回归：prepareLocalCut 后局部 ExactMesh 按切割边分区标记 |
+| `testCutFacesExact` | 回归：CutFacesExact 从全局面集构建 ExactMesh 切割分区并收集缝边 |
+| `testSplitMeshNormals` | 回归：SplitMeshByMarkAndEdge 输出多边形法向与内部三角形一致 |
 
 ### 集成测试
 
@@ -389,7 +396,7 @@ Kd 0.29 0.33 0.32
 
 ## 已知限制
 
-1. **Phase 2.4 延长切割依赖外部 cutter**：真实 cutter（cgalLocalMeshCut submodule，CGAL corefine）为保守黑盒，切割线退化（沿边/过顶点/中点落边上）时可能 no-op，可接受
+1. **局部切割依赖外部 cutter**：真实 cutter（cgalLocalMeshCut submodule，CGAL corefine）为保守黑盒，退化切割线（沿边/过顶点/中点落边上）可能 no-op 或在 Debug 触发 CGAL 断言，可接受
 2. **corefine 输入必须流形**：CGAL `Surface_mesh` 拒绝非流形边（`add_face` 失败丢面，`Cut3D` 计数）；非流形点（star vertex）会导致 corefine 断言崩溃（Debug）或访问冲突（Release）。因此 `cutRegion` 每刀后折叠零面积分片、按精确坐标合并新顶点、清理孤立顶点，保障局部 mesh 流形
 3. **缝边传播为纯分割**：`propagateExternal` 把缝边上的新顶点传播到外部邻接面，同缝边多顶点一次分割并更新「缝边→邻居面」映射，端点重合跳过；只分割、不新增边界
 4. **单边界环**：`boundlines` 只存储第一个边界环，多孔区域会丢失信息（完整环在 `splitReg::boundaries`）
@@ -402,6 +409,8 @@ Kd 0.29 0.33 0.32
 - [x] Phase 2.4 延长切割：局部 mesh + 外部 cutter 管线，并接入真实 CGAL corefine
 - [x] 多折线连续切割流形保障：f:source 分片父面归属、零面积分片折叠、孤立顶点清理
 - [x] 缝边传播：propagateExternal 纯分割 + 邻居映射更新，接缝无裂缝
+- [x] 局部 ExactMesh 化：局部阶段以 CGAL ExactMesh 为载体，切割线全程精确坐标（ExactPoint）
+- [x] 局部切割并行化：prepareLocalCut 只读全局、并行执行，写回/缝合串行
 - [ ] 支持多孔区域的边界提取
 - [ ] 非流形输入（非流形边/点）的预处理：劈开非流形边后再进 corefine
 - [ ] 优化性能（O(n²) 前插入 → O(n)）
@@ -422,3 +431,6 @@ Claude (Anthropic) - 2026-07-21
 
 2026-08-13：按当前代码同步更新（cutRegion 一体化流程、f:source 分片父面、
 流形保障、缝边纯分割传播、面颜色调试输出、测试清单与构建命令）。
+
+2026-08-13（分支 codex/local-parallel-cut-merge）：局部独立切割 + 统一缝合两阶段
+（ExactMesh 会话、精确切割线、并行 prepareLocalCut、stitchAllSeams、splitReg 全局提取）。
