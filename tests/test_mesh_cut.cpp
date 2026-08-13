@@ -2,7 +2,9 @@
 #include <iostream>
 #include <cassert>
 #include <algorithm>
+#include <array>
 #include <set>
+#include <tuple>
 #include "tool/edge_info.h"
 #include "tool/polyline.h"
 #include "tool/cut_plane.h"
@@ -1413,6 +1415,213 @@ void testCutRegionPlumbing() {
 	std::cout << "testCutRegionPlumbing passed" << std::endl;
 }
 
+// 回归：同一条区域内多条互不相同的复杂折线连续切割时，
+// AddCutLines 通过 f:source 确定分片父面，不得产生重复/退化三角形，面积必须守恒。
+static CMeshOD BuildTempGridMesh(int cellCount, double waveHeight)
+{
+	CMeshOD mesh;
+	int vertexPerSide = cellCount + 1;
+	vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, vertexPerSide * vertexPerSide);
+	for (int j = 0; j <= cellCount; j++)
+	{
+		for (int i = 0; i <= cellCount; i++)
+		{
+			double lift = waveHeight * std::sin(i * 0.7) * std::cos(j * 0.6);
+			mesh.vert[j * vertexPerSide + i].P() = vcg::Point3d(i, j, lift);
+		}
+	}
+	for (int j = 0; j < cellCount; j++)
+	{
+		for (int i = 0; i < cellCount; i++)
+		{
+			int bl = j * vertexPerSide + i;
+			int br = j * vertexPerSide + i + 1;
+			int tl = (j + 1) * vertexPerSide + i;
+			int tr = (j + 1) * vertexPerSide + i + 1;
+			vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[tl], &mesh.vert[bl], &mesh.vert[br]);
+			vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[tl], &mesh.vert[br], &mesh.vert[tr]);
+		}
+	}
+	mesh.face.EnableFFAdjacency();
+	mesh.face.EnableMark();
+	mesh.vert.EnableMark();
+	vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+	vcg::tri::UpdateNormal<CMeshOD>::PerFace(mesh);
+	for (auto& face : mesh.face)
+	{
+		face.IMark() = 1;
+	}
+	return mesh;
+}
+
+static void CollectTempTriples(const CMeshOD& mesh, std::map<std::tuple<int, int, int>, int>& triples)
+{
+	triples.clear();
+	for (const auto& face : mesh.face)
+	{
+		if (face.IsD())
+		{
+			continue;
+		}
+		std::array<int, 3> vertices = { face.V(0)->Index(), face.V(1)->Index(), face.V(2)->Index() };
+		std::sort(vertices.begin(), vertices.end());
+		triples[std::make_tuple(vertices[0], vertices[1], vertices[2])]++;
+	}
+}
+
+static double CollectTempArea(const CMeshOD& mesh)
+{
+	double totalArea = 0.0;
+	for (const auto& face : mesh.face)
+	{
+		if (face.IsD())
+		{
+			continue;
+		}
+		totalArea += ((face.P(1) - face.P(0)) ^ (face.P(2) - face.P(0))).Norm() * 0.5;
+	}
+	return totalArea;
+}
+
+void testCutRegionManyComplexPolylines()
+{
+	const int cellCount = 4;
+	CMeshOD mesh = BuildTempGridMesh(cellCount, 0.15);
+	int vertexPerSide = cellCount + 1;
+	std::vector<int> curFaces;
+	for (int faceIndex = 0; faceIndex < (int)mesh.face.size(); faceIndex++)
+	{
+		curFaces.push_back(faceIndex);
+	}
+
+	MeshCutByMark::LocalMeshCutManager manager;
+	MeshCutByMark::LocalMeshCutManager::LocalMesh localMesh;
+	manager.extractLocalMesh(&mesh, curFaces, localMesh);
+
+	std::vector<std::vector<int>> polylineVertices = {
+		{ 0, vertexPerSide + 1, 2 * (vertexPerSide + 1), 3 * (vertexPerSide + 1), 4 * (vertexPerSide + 1) },
+		{ vertexPerSide - 1, vertexPerSide + 1, 2 * vertexPerSide + 1, 3 * vertexPerSide + 1, 4 * vertexPerSide },
+		{ 2, 2 * vertexPerSide + 2, 4 * vertexPerSide + 2 },
+		{ vertexPerSide, vertexPerSide + 2, 2 * vertexPerSide + 2, 3 * vertexPerSide + 2, 4 * vertexPerSide + 2 },
+		{ 1, vertexPerSide + 1, 2 * vertexPerSide, 3 * vertexPerSide + 2, 4 * vertexPerSide + 1 },
+		{ 0, vertexPerSide, 2 * vertexPerSide + 1, 3 * vertexPerSide + 1, 4 * vertexPerSide + 2 },
+		{ 3, 2 * vertexPerSide + 1, 3 * vertexPerSide + 3, 4 * vertexPerSide + 3 },
+		{ 4, 2 * vertexPerSide + 2, 3 * vertexPerSide + 1, 4 * vertexPerSide },
+	};
+
+	std::set<int> boundaryVertices;
+	JasMeshAddCutLines cutter;
+	std::map<std::tuple<int, int, int>, int> previousTriples;
+	CollectTempTriples(localMesh.mesh, previousTriples);
+	const double initialArea = CollectTempArea(localMesh.mesh);
+
+	int cutIndex = 0;
+	for (const auto& vertices : polylineVertices)
+	{
+		MeshCutByMark::Polyline polyline;
+		polyline.type = MeshCutByMark::CUT_EDGE_NON_MANIFOLD;
+		polyline.vertexIndices = vertices;
+		const bool extendStart = boundaryVertices.count(polyline.vertexIndices.front()) == 0;
+		const bool extendEnd = boundaryVertices.count(polyline.vertexIndices.back()) == 0;
+		auto cutInput = manager.buildCutInput(polyline, extendStart, extendEnd, localMesh, &mesh);
+		std::vector<int> cutLine;
+		cutter.AddCutLines(&localMesh.mesh, cutInput.normal, cutInput.line, cutLine);
+
+		std::map<std::tuple<int, int, int>, int> currentTriples;
+		CollectTempTriples(localMesh.mesh, currentTriples);
+		int duplicateCount = 0;
+		for (const auto& entry : currentTriples)
+		{
+			if (entry.second > 1)
+			{
+				duplicateCount++;
+			}
+		}
+		int degenerateCount = 0;
+		for (const auto& face : localMesh.mesh.face)
+		{
+			if (!face.IsD())
+			{
+				double area = ((face.P(1) - face.P(0)) ^ (face.P(2) - face.P(0))).Norm();
+				if (area < 1e-12)
+				{
+					degenerateCount++;
+				}
+			}
+		}
+		double currentArea = CollectTempArea(localMesh.mesh);
+		std::cout << "  cut " << cutIndex << ": liveFaces=" << currentTriples.size()
+			<< " duplicateTriples=" << duplicateCount
+			<< " degenerate=" << degenerateCount
+			<< " areaRatio=" << (currentArea / initialArea) << std::endl;
+		assert(duplicateCount == 0);
+		assert(degenerateCount == 0);
+		assert(std::abs(currentArea / initialArea - 1.0) < 1e-9);
+		previousTriples = currentTriples;
+		cutIndex++;
+	}
+	assert(previousTriples.size() > 0);
+	std::cout << "testCutRegionManyComplexPolylines passed" << std::endl;
+}
+
+// 回归：真实非流形边（3 面共享一条边）下 f:source 路径不崩溃、不丢已存在面
+void testCutRegionNonManifoldEdgeStability()
+{
+	CMeshOD mesh;
+	vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 5);
+	mesh.vert[0].P() = vcg::Point3d(0, 0, 0);
+	mesh.vert[1].P() = vcg::Point3d(1, 0, 0);
+	mesh.vert[2].P() = vcg::Point3d(0, 1, 0);
+	mesh.vert[3].P() = vcg::Point3d(0.5, -0.5, 0.5);
+	mesh.vert[4].P() = vcg::Point3d(0.5, 0.5, -0.5);
+	vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+	vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[3]);
+	vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[4]);
+	mesh.face.EnableFFAdjacency();
+	mesh.face.EnableMark();
+	mesh.vert.EnableMark();
+	vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+	vcg::tri::UpdateNormal<CMeshOD>::PerFace(mesh);
+	for (auto& face : mesh.face)
+	{
+		face.IMark() = 1;
+	}
+
+	JasMeshAddCutLines cutter;
+	vcg::Point3d normal(0, 0, 1);
+	std::vector<vcg::Point3d> line = {
+		vcg::Point3d(0, 0, 0), vcg::Point3d(1, 0, 0) };
+	std::vector<int> cutLine;
+	cutter.AddCutLines(&mesh, normal, line, cutLine);
+
+	int liveFaceCount = 0;
+	int duplicateCount = 0;
+	std::map<std::tuple<int, int, int>, int> triples;
+	for (const auto& face : mesh.face)
+	{
+		if (face.IsD())
+		{
+			continue;
+		}
+		liveFaceCount++;
+		std::array<int, 3> vertices = { face.V(0)->Index(), face.V(1)->Index(), face.V(2)->Index() };
+		std::sort(vertices.begin(), vertices.end());
+		triples[std::make_tuple(vertices[0], vertices[1], vertices[2])]++;
+	}
+	for (const auto& entry : triples)
+	{
+		if (entry.second > 1)
+		{
+			duplicateCount++;
+		}
+	}
+	std::cout << "nonManifoldEdgeCut: liveFaces=" << liveFaceCount
+		<< " duplicateTriples=" << duplicateCount << std::endl;
+	assert(duplicateCount == 0);
+	assert(liveFaceCount >= 3);
+	std::cout << "testCutRegionNonManifoldEdgeStability passed" << std::endl;
+}
+
 int main() {
     testEdgeHash();
     testBuildEdgeInfo();
@@ -1445,5 +1654,7 @@ int main() {
     testGrowNewMark();
     testRebuildCurFaces();
     testCutRegionPlumbing();
+    testCutRegionManyComplexPolylines();
+    testCutRegionNonManifoldEdgeStability();
     return 0;
 }
