@@ -1855,6 +1855,21 @@ void testSeamPropagation()
 		}
 		std::cout << "seamCutRegion: liveFaces=" << liveFaces
 			<< " boundaryEdges=" << CountTempBoundaryEdges(mesh) << std::endl;
+		int reversedFaceCount = 0;
+		for (const auto& face : mesh.face)
+		{
+			if (!face.IsD())
+			{
+				vcg::Point3d normal =
+					(face.P(1) - face.P(0)) ^ (face.P(2) - face.P(0));
+				if (normal.Z() < 0)
+				{
+					reversedFaceCount++;
+				}
+			}
+		}
+		std::cout << "  seamCutRegionReversedFaces=" << reversedFaceCount
+			<< std::endl;
 	}
 	// 场景 2：同一条缝边两个新顶点，手工调 propagateExternal
 	{
@@ -1973,7 +1988,10 @@ void testStitchAllSeams()
 	seamB.points.push_back(pointB);
 	resultB.seams.push_back(seamB);
 
-	MeshCutByMark::LocalMeshCutManager::stitchAllSeams(&mesh, { resultA, resultB });
+	MeshCutByMark::RegionMarker regionMarker;
+	regionMarker.initNewMark(&mesh);
+	MeshCutByMark::LocalMeshCutManager::stitchAllSeams(
+		&mesh, { resultA, resultB }, regionMarker);
 
 	std::map<std::pair<int, int>, int> edgeCount;
 	for (const auto& face : mesh.face)
@@ -2075,6 +2093,58 @@ void testCutFacesExact()
 	std::cout << "testCutFacesExact passed" << std::endl;
 }
 
+// 回归：SplitMeshByMarkAndEdge 输出多边形法向与内部三角形一致
+void testSplitMeshNormals()
+{
+	std::cout << "splitMeshNormals: start" << std::endl;
+	CMeshOD mesh;
+	vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 5);
+	mesh.vert[0].P() = vcg::Point3d(0, 0, 0);
+	mesh.vert[1].P() = vcg::Point3d(1, 0, 0);
+	mesh.vert[2].P() = vcg::Point3d(0, 1, 0);
+	mesh.vert[3].P() = vcg::Point3d(2, 0, 0);
+	mesh.vert[4].P() = vcg::Point3d(0, 2, 0);
+	// mark1 区域：F1、F2；mark2 区域：F3；边 (1,2) 被 3 面共享（非流形）
+	vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+	vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+	vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[4], &mesh.vert[2]);
+	mesh.face.EnableMark();
+	mesh.vert.EnableMark();
+	mesh.face[0].IMark() = 1;
+	mesh.face[1].IMark() = 1;
+	mesh.face[2].IMark() = 2;
+
+	JasMeshMarkAndCutSplit splitter;
+	splitter.SetMainMesh(&mesh);
+	std::vector<JasMeshMarkAndCutSplit::splitReg> regions;
+	try
+	{
+		splitter.SplitMeshByMarkAndEdge(regions);
+	}
+	catch (const std::exception& exception)
+	{
+		std::cout << "splitMeshNormals: exception=" << exception.what() << std::endl;
+		return;
+	}
+
+	std::cout << "splitMeshNormals: regions=" << regions.size() << std::endl;
+	int reversedNormalCount = 0;
+	for (const auto& region : regions)
+	{
+		std::cout << "  region newMark=" << region.newMark
+			<< " normal=(" << region.normal.X() << "," << region.normal.Y()
+			<< "," << region.normal.Z() << ") tris=" << region.inTris.size()
+			<< std::endl;
+		if (region.normal.Z() < 0)
+		{
+			reversedNormalCount++;
+		}
+	}
+	std::cout << "splitMeshNormals: reversedNormalCount="
+		<< reversedNormalCount << std::endl;
+	std::cout << "testSplitMeshNormals passed" << std::endl;
+}
+
 int main() {
     testEdgeHash();
     testBuildEdgeInfo();
@@ -2115,5 +2185,6 @@ int main() {
     testStitchAllSeams();
     testPrepareLocalCutMarks();
     testCutFacesExact();
+    testSplitMeshNormals();
     return 0;
 }

@@ -530,7 +530,7 @@ void JasMeshMarkAndCutSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRe
 
     // 统一缝合所有局部单元之间的拼接边：合并两侧切点顶点，对未切侧做纯分割，
     // 消除接缝裂缝；缝合后重算 FF/法向。
-    m_localMeshCut.stitchAllSeams(m_pMesh, allLocalResults);
+    m_localMeshCut.stitchAllSeams(m_pMesh, allLocalResults, m_regionMarker);
     vcg::tri::UpdateTopology<CMeshOD>::FaceFace(*m_pMesh);
     vcg::tri::UpdateNormal<CMeshOD>::PerFace(*m_pMesh);
 
@@ -559,7 +559,21 @@ void JasMeshMarkAndCutSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRe
         region.mark = m_pMesh->face[faces[0]].IMark();
         region.newMark = newMark;
         region.inTris = faces;
-        region.normal = m_pMesh->face[faces[0]].N();
+        // 多边形法向取组内三角形法向的累加，保证与内部三角形方向一致。
+        vcg::Point3d normalSum(0, 0, 0);
+        for (int faceIndex : faces)
+        {
+            normalSum += m_pMesh->face[faceIndex].N();
+        }
+        if (normalSum.Norm() > 1e-12)
+        {
+            normalSum.Normalize();
+        }
+        else
+        {
+            normalSum = m_pMesh->face[faces[0]].N();
+        }
+        region.normal = normalSum;
         region.boundlines = boundaries.empty() ? std::vector<int>() : boundaries[0];
         region.boundaries = boundaries;
 

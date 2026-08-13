@@ -384,6 +384,7 @@ namespace MeshCutByMark
 					continue;
 				}
 
+
 				// 更新其他缝边对该外部面的引用：重定向到包含该缝边的子面
 				for (auto& otherEntry : seamFace)
 				{
@@ -514,7 +515,9 @@ namespace MeshCutByMark
 
 		// 统一缝合：聚合所有局部单元的拼接边切点，按坐标把两侧切点合并为同一个
 		// 全局顶点，重写全局面引用，再对每条拼接边的两侧外部邻接面做纯分割。
-		static void stitchAllSeams(CMeshOD* mesh, const std::vector<LocalCutResult>& results)
+		static void stitchAllSeams(CMeshOD* mesh,
+			const std::vector<LocalCutResult>& results,
+			RegionMarker& regionMarker)
 		{
 			std::map<std::tuple<double, double, double>, int> pointToVertex;
 			std::map<int, int> mergeVertex; // 旧全局顶点 -> 保留的全局顶点
@@ -606,6 +609,13 @@ namespace MeshCutByMark
 					std::vector<int> newSubFaces;
 					splitExternalFaceMulti(mesh, externalFaceIndex, seamKey.first,
 						seamKey.second, splitVertices, newSubFaces);
+					regionMarker.growNewMark(mesh->face.size());
+					const int inheritedNewMark =
+						regionMarker.getNewMark(externalFaceIndex);
+					for (int subFaceIndex : newSubFaces)
+					{
+						regionMarker.setNewMark(subFaceIndex, inheritedNewMark);
+					}
 				}
 			}
 		}
