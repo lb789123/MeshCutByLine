@@ -265,9 +265,11 @@ namespace MeshCutByMark
 		// 注意：MergeResult 必须已声明（本方法定义在 MergeResult 之后）
 		void propagateExternal(CMeshOD* mesh, const LocalMesh& lm, const MergeResult& merge)
 		{
-			// Split external faces where new seam vertices land on their boundary edges
-
-			// 对每个新顶点（local >= Nv0）：判断是否落在某条缝边上
+			// 收集每条缝边内部的新顶点（沿边参数 t 排序），同一缝边多个交点
+			// 必须一次分割；并维护“缝边 -> 外部邻接面”的可变映射，分割后把
+			// 其他指向同一外部面的缝边重定向到包含它的子面，保证后续顶点能
+			// 继续细分（否则外部面只被切一刀，其余位置留下裂缝）。
+			std::map<std::pair<int, int>, std::vector<std::pair<double, int>>> seamPoints;
 			for (int localVertexIndex = lm.Nv0; localVertexIndex < (int)lm.mesh.vert.size(); localVertexIndex++)
 			{
 				if (lm.mesh.vert[localVertexIndex].IsD())
@@ -275,15 +277,9 @@ namespace MeshCutByMark
 					continue; // 已被清理的孤立顶点不参与外部加点
 				}
 				vcg::Point3d vertexPoint = lm.mesh.vert[localVertexIndex].P();
-				// 找它落在哪条缝边（local 顶点对）上
 				for (const auto& seamEntry : lm.seamExternal)
 				{
 					int localVertexA = seamEntry.first.first, localVertexB = seamEntry.first.second;
-					int externalFaceIndex = seamEntry.second;
-					if (mesh->face[externalFaceIndex].IsD())
-					{
-						continue;
-					}
 					vcg::Point3d segmentPointA = lm.mesh.vert[localVertexA].P();
 					vcg::Point3d segmentPointB = lm.mesh.vert[localVertexB].P();
 					if (!pointOnSegment(vertexPoint, segmentPointA, segmentPointB))
@@ -310,8 +306,80 @@ namespace MeshCutByMark
 					{
 						continue;
 					}
-					splitExternalFace(mesh, externalFaceIndex, globalVertexA, globalVertexB, globalVertexIndex);
+					vcg::Point3d segmentVectorAB = segmentPointB - segmentPointA;
+					double projectionParameter =
+						(vertexPoint - segmentPointA) * segmentVectorAB / segmentVectorAB.SquaredNorm();
+					seamPoints[{ localVertexA, localVertexB }].push_back({ projectionParameter, globalVertexIndex });
 					break; // 该新顶点已处理
+				}
+			}
+
+			// 可变的外部面映射：分割后其他缝边重定向到包含它的子面
+			std::map<std::pair<int, int>, int> seamFace = lm.seamExternal;
+			for (auto& entry : seamPoints)
+			{
+				auto& points = entry.second;
+				if (points.empty())
+				{
+					continue;
+				}
+				std::sort(points.begin(), points.end());
+				std::vector<int> splitVertices;
+				for (const auto& point : points)
+				{
+					if (splitVertices.empty() || splitVertices.back() != point.second)
+					{
+						splitVertices.push_back(point.second);
+					}
+				}
+				if (splitVertices.empty())
+				{
+					continue;
+				}
+				const std::pair<int, int> seamKey = entry.first;
+				int externalFaceIndex = seamFace[seamKey];
+				if (externalFaceIndex < 0 || externalFaceIndex >= (int)mesh->face.size() ||
+					mesh->face[externalFaceIndex].IsD())
+				{
+					continue; // 外部面缺失：防御
+				}
+				int globalVertexA = lm.localToGlobalVert.size() > (size_t)seamKey.first
+					? lm.localToGlobalVert[seamKey.first] : -1;
+				int globalVertexB = lm.localToGlobalVert.size() > (size_t)seamKey.second
+					? lm.localToGlobalVert[seamKey.second] : -1;
+
+				std::vector<int> newSubFaces;
+				splitExternalFaceMulti(mesh, externalFaceIndex, globalVertexA, globalVertexB,
+					splitVertices, newSubFaces);
+				if (newSubFaces.empty())
+				{
+					continue;
+				}
+
+				// 更新其他缝边对该外部面的引用：重定向到包含该缝边的子面
+				for (auto& otherEntry : seamFace)
+				{
+					if (otherEntry.second != externalFaceIndex)
+					{
+						continue;
+					}
+					if (otherEntry.first == seamKey)
+					{
+						otherEntry.second = -1; // 本缝边已处理
+						continue;
+					}
+					int otherVertexA = lm.localToGlobalVert.size() > (size_t)otherEntry.first.first
+						? lm.localToGlobalVert[otherEntry.first.first] : -1;
+					int otherVertexB = lm.localToGlobalVert.size() > (size_t)otherEntry.first.second
+						? lm.localToGlobalVert[otherEntry.first.second] : -1;
+					for (int subFaceIndex : newSubFaces)
+					{
+						if (faceHasEdge(mesh, subFaceIndex, otherVertexA, otherVertexB))
+						{
+							otherEntry.second = subFaceIndex;
+							break;
+						}
+					}
 				}
 			}
 		}
@@ -332,10 +400,28 @@ namespace MeshCutByMark
 		}
 
 		// 把外部面 extG 沿 (ga, gb) 边在 gv 处一分为二。用下标访问，不跨 AddFace 持引用。
-		static void splitExternalFace(CMeshOD* mesh, int extG, int ga, int gb, int gv)
+		// face 是否包含无向边 (vertexA, vertexB)
+		static bool faceHasEdge(CMeshOD* mesh, int faceIndex, int vertexA, int vertexB)
 		{
-			// Split the external face into two faces at the seam vertex, then delete the original
+			const auto& face = mesh->face[faceIndex];
+			for (int edgeIndex = 0; edgeIndex < 3; edgeIndex++)
+			{
+				int edgeVertexA = face.V(edgeIndex)->Index();
+				int edgeVertexB = face.V((edgeIndex + 1) % 3)->Index();
+				if ((edgeVertexA == vertexA && edgeVertexB == vertexB) ||
+					(edgeVertexA == vertexB && edgeVertexB == vertexA))
+				{
+					return true;
+				}
+			}
+			return false;
+		}
 
+		// 把外部面 extG 沿 (ga, gb) 边在 splitVertices（按 a->b 顺序）处一次切成
+		// n+1 个子面： (a, v0, c), (v0, v1, c), ..., (v_{n-1}, b, c)，原面删除。
+		static void splitExternalFaceMulti(CMeshOD* mesh, int extG, int ga, int gb,
+			const std::vector<int>& splitVertices, std::vector<int>& newSubFaces)
+		{
 			// 先读出所需信息（AddFace 可能 realloc mesh->face，使引用失效）
 			int vertexIndices[3] = {
 				mesh->face[extG].V(0)->Index(),
@@ -366,12 +452,34 @@ namespace MeshCutByMark
 			int windingVertexB = vertexIndices[(seamEdgeIndex + 1) % 3];
 			int thirdVertexIndex = vertexIndices[(seamEdgeIndex + 2) % 3];
 
-			// 新面 A: (a, gv, c)
-			vcg::tri::Allocator<CMeshOD>::AddFace(*mesh, &mesh->vert[windingVertexA], &mesh->vert[gv], &mesh->vert[thirdVertexIndex]);
-			mesh->face.back().IMark() = originalMark;
-			// 新面 B: (gv, b, c)
-			vcg::tri::Allocator<CMeshOD>::AddFace(*mesh, &mesh->vert[gv], &mesh->vert[windingVertexB], &mesh->vert[thirdVertexIndex]);
-			mesh->face.back().IMark() = originalMark;
+			// 分割点按外部面真实绕序 a -> b 重新排序（传入的 splitVertices 顺序
+			// 按缝边 key 方向，可能与绕序相反，多个分割点时顺序错误会生成自交面）
+			std::vector<std::pair<double, int>> orderedVertices;
+			vcg::Point3d windingVectorAB = mesh->vert[windingVertexB].P() - mesh->vert[windingVertexA].P();
+			for (int splitVertex : splitVertices)
+			{
+				vcg::Point3d windingVectorAP = mesh->vert[splitVertex].P() - mesh->vert[windingVertexA].P();
+				double projectionParameter =
+					windingVectorAP * windingVectorAB / windingVectorAB.SquaredNorm();
+				orderedVertices.push_back({ projectionParameter, splitVertex });
+			}
+			std::sort(orderedVertices.begin(), orderedVertices.end());
+
+			int previousVertex = windingVertexA;
+			for (size_t splitIndex = 0; splitIndex <= orderedVertices.size(); splitIndex++)
+			{
+				int currentVertex =
+					(splitIndex < orderedVertices.size()) ? orderedVertices[splitIndex].second : windingVertexB;
+				if (previousVertex == currentVertex)
+				{
+					continue; // 防御：相邻分割点重合
+				}
+				vcg::tri::Allocator<CMeshOD>::AddFace(*mesh,
+					&mesh->vert[previousVertex], &mesh->vert[currentVertex], &mesh->vert[thirdVertexIndex]);
+				mesh->face.back().IMark() = originalMark;
+				newSubFaces.push_back(static_cast<int>(mesh->face.size()) - 1);
+				previousVertex = currentVertex;
+			}
 			// 原 extG 标记删除（按下标，安全）
 			mesh->face[extG].SetD();
 		}

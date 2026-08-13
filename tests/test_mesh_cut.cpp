@@ -1781,6 +1781,149 @@ void testPropagateExternalCoincident()
 	std::cout << "testPropagateExternalCoincident passed" << std::endl;
 }
 
+// 回归：缝边上的切割新顶点必须在外部邻接面上被加点细分（无裂缝）；
+// 同缝边多顶点一次分割，同一外部面多条缝边分割后更新邻居映射。
+static int CountTempBoundaryEdges(const CMeshOD& mesh)
+{
+	std::map<std::pair<int, int>, int> edgeCount;
+	for (const auto& face : mesh.face)
+	{
+		if (face.IsD())
+		{
+			continue;
+		}
+		for (int edgeIndex = 0; edgeIndex < 3; edgeIndex++)
+		{
+			int vertexA = face.V(edgeIndex)->Index();
+			int vertexB = face.V((edgeIndex + 1) % 3)->Index();
+			edgeCount[std::minmax(vertexA, vertexB)]++;
+		}
+	}
+	int boundaryCount = 0;
+	for (const auto& entry : edgeCount)
+	{
+		if (entry.second == 1)
+		{
+			boundaryCount++;
+		}
+	}
+	return boundaryCount;
+}
+
+static CMeshOD BuildTempSeamMesh()
+{
+	CMeshOD mesh;
+	vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 4);
+	mesh.vert[0].P() = vcg::Point3d(0, 0, 0);
+	mesh.vert[1].P() = vcg::Point3d(2, 0, 0);
+	mesh.vert[2].P() = vcg::Point3d(0, 1, 0);
+	mesh.vert[3].P() = vcg::Point3d(2, 1, 0);
+	// 面 0 = 区域（mark 1），面 1 = 外部邻接（mark 2），共享缝边 (1,2)
+	vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+	vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+	mesh.face.EnableFFAdjacency();
+	mesh.face.EnableMark();
+	mesh.vert.EnableMark();
+	vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+	vcg::tri::UpdateNormal<CMeshOD>::PerFace(mesh);
+	mesh.face[0].IMark() = 1;
+	mesh.face[1].IMark() = 2;
+	return mesh;
+}
+
+void testSeamPropagation()
+{
+	// 场景 1：完整 cutRegion，折线 (0,3) 穿过缝边 (1,2)
+	{
+		CMeshOD mesh = BuildTempSeamMesh();
+		MeshCutByMark::RegionMarker regionMarker;
+		regionMarker.initNewMark(&mesh);
+		std::vector<int> curFaces = { 0 };
+		MeshCutByMark::Polyline polyline;
+		polyline.type = MeshCutByMark::CUT_EDGE_NON_MANIFOLD;
+		polyline.vertexIndices = { 0, 3 };
+		MeshCutByMark::LocalMeshCutManager manager;
+		int newMarkCounter = 1;
+		manager.cutRegion(&mesh, curFaces, { polyline }, 1, regionMarker, newMarkCounter);
+		int liveFaces = 0;
+		for (const auto& face : mesh.face)
+		{
+			if (!face.IsD())
+			{
+				liveFaces++;
+			}
+		}
+		std::cout << "seamCutRegion: liveFaces=" << liveFaces
+			<< " boundaryEdges=" << CountTempBoundaryEdges(mesh) << std::endl;
+	}
+	// 场景 2：同一条缝边两个新顶点，手工调 propagateExternal
+	{
+		CMeshOD mesh = BuildTempSeamMesh();
+		MeshCutByMark::LocalMeshCutManager manager;
+		MeshCutByMark::LocalMeshCutManager::LocalMesh localMesh;
+		manager.extractLocalMesh(&mesh, { 0 }, localMesh);
+		vcg::tri::Allocator<CMeshOD>::AddVertices(localMesh.mesh, 2);
+		localMesh.mesh.vert[3].P() = vcg::Point3d(1, 0.5, 0);
+		localMesh.mesh.vert[4].P() = vcg::Point3d(0.5, 0.75, 0);
+		vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 2);
+		mesh.vert[4].P() = vcg::Point3d(1, 0.5, 0);
+		mesh.vert[5].P() = vcg::Point3d(0.5, 0.75, 0);
+		// 模拟 mergeBack：区域面 0 沿缝边 (1,2) 被切开成 3 片 (0,1,4),(0,4,5),(0,5,2)
+		mesh.face[0].V(2) = &mesh.vert[4];
+		vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[4], &mesh.vert[5]);
+		vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[5], &mesh.vert[2]);
+		MeshCutByMark::LocalMeshCutManager::MergeResult mergeResult;
+		mergeResult.vertLocalToGlobal = { 0, 1, 2, 4, 5 };
+		manager.propagateExternal(&mesh, localMesh, mergeResult);
+		std::cout << "seamTwoVertices: boundaryEdges=" << CountTempBoundaryEdges(mesh) << std::endl;
+	}
+	// 场景 3：同一外部面被两条缝边共享（角），两条缝边各有新顶点
+	{
+		CMeshOD mesh;
+		vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 5);
+		mesh.vert[0].P() = vcg::Point3d(0, 0, 0);
+		mesh.vert[1].P() = vcg::Point3d(2, 0, 0);
+		mesh.vert[2].P() = vcg::Point3d(0, 1, 0);
+		mesh.vert[3].P() = vcg::Point3d(2, 1, 0);
+		mesh.vert[4].P() = vcg::Point3d(2, -1, 0);
+		// 区域：面 0=(0,1,2) 共享缝边 (1,2)；面 1=(4,1,3) 共享缝边 (1,3)
+		vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+		vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[4], &mesh.vert[1], &mesh.vert[3]);
+		// 外部：面 2=(1,3,2)，与两个区域面共享 (1,3) 和 (1,2)
+		vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+		mesh.face.EnableFFAdjacency();
+		mesh.face.EnableMark();
+		mesh.vert.EnableMark();
+		vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+		vcg::tri::UpdateNormal<CMeshOD>::PerFace(mesh);
+		for (int faceIndex = 0; faceIndex < 3; faceIndex++)
+		{
+			mesh.face[faceIndex].IMark() = (faceIndex == 2) ? 2 : 1;
+		}
+
+		MeshCutByMark::LocalMeshCutManager manager;
+		MeshCutByMark::LocalMeshCutManager::LocalMesh localMesh;
+		manager.extractLocalMesh(&mesh, { 0, 1 }, localMesh);
+		// 新顶点：V1 在缝边 (1,2) 上，V2 在缝边 (1,3) 上
+		vcg::tri::Allocator<CMeshOD>::AddVertices(localMesh.mesh, 2);
+		localMesh.mesh.vert[5].P() = vcg::Point3d(1, 0.5, 0);
+		localMesh.mesh.vert[6].P() = vcg::Point3d(2, 0.5, 0);
+		vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 2);
+		mesh.vert[5].P() = vcg::Point3d(1, 0.5, 0);
+		mesh.vert[6].P() = vcg::Point3d(2, 0.5, 0);
+		// 模拟 mergeBack：区域面沿各自缝边切开
+		mesh.face[0].V(2) = &mesh.vert[5];
+		vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[5], &mesh.vert[2]);
+		mesh.face[1].V(2) = &mesh.vert[6];
+		vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[4], &mesh.vert[6], &mesh.vert[3]);
+		MeshCutByMark::LocalMeshCutManager::MergeResult mergeResult;
+		mergeResult.vertLocalToGlobal = { 0, 1, 2, 4, 3, 5, 6 };
+		manager.propagateExternal(&mesh, localMesh, mergeResult);
+		std::cout << "seamCorner: boundaryEdges=" << CountTempBoundaryEdges(mesh) << std::endl;
+	}
+	std::cout << "testSeamPropagation passed" << std::endl;
+}
+
 int main() {
     testEdgeHash();
     testBuildEdgeInfo();
@@ -1817,5 +1960,6 @@ int main() {
     testCutRegionNonManifoldEdgeStability();
     // testTempStarVertexCorefine();  // 临时跳过（该场景 Release 下会崩溃）
     testPropagateExternalCoincident();
+    testSeamPropagation();
     return 0;
 }
