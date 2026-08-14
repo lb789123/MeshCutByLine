@@ -16,7 +16,8 @@ struct SeamCutPoint
     int localVertexIndex = -1;   // 局部顶点下标
     int globalVertexIndex = -1;  // 全局顶点下标（合并后有效）
     double t = 0.0;              // 沿拼接边 a->b 的投影参数，用于排序
-    vcg::Point3d point;          // 切点坐标
+    vcg::Point3d point;          // 切点坐标（double，用于调试/打印）
+    jaslmc::ExactPoint exactPoint; // 切点精确坐标，用于缝合阶段去重（不得用 double 比较）
 };
 
 // 一条拼接边的切点集合，按沿边方向有序。
@@ -24,7 +25,8 @@ struct SeamCutLine
 {
     int globalVertexA = -1;      // 拼接边端点（规范化，小下标在前）
     int globalVertexB = -1;
-    int externalFaceIndex = -1;  // 拼接边对面的全局邻接面（缝合阶段细分它）
+    // 拼接边对面的全部全局邻接面（非流形缝边可能有多个，缝合阶段都细分）。
+    std::vector<int> externalFaceIndices;
     std::vector<SeamCutPoint> points;
 };
 

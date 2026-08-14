@@ -20,7 +20,6 @@
 #include <map>
 #include "tool/edge_info.h"
 #include "tool/polyline.h"
-#include "tool/cut_plane.h"
 #include "tool/region_marker.h"
 #include "tool/local_mesh_cut.h"
 
@@ -86,9 +85,6 @@ private:
     // 将面集合写入 OFF 调试文件
     void debugWriteFacesOFF(int iterIdx, const char* suffix, const std::vector<int>& faceIndices);
 
-    // 将多个子区域写入 OFF 调试文件
-    void debugWriteSubRegionsOFF(int iterIdx, const std::vector<std::vector<int>>& subRegions);
-
     // 将最终多边形写入 OBJ 调试文件
     void debugWritePolygonsOBJ(const std::map<int, std::vector<int>>& markToFaces);
 
@@ -101,8 +97,6 @@ private:
     MeshCutByMark::RegionMarker m_regionMarker;       // 区域标记管理器
     MeshCutByMark::LocalMeshCutManager m_localMeshCut; // 局部 mesh 切割管线
     int m_newMarkCounter = 0;                          // 新区域标记计数器
-    std::vector<vcg::Point3i> m_edgeMarks;             // 对应是否是分割边
-
     bool m_debug = false;                              // 调试输出开关
     std::string m_debugOutputDir = "debug_output/";    // 调试输出目录
     int m_debugIterCounter = 0;                        // 主循环迭代计数器

@@ -4,7 +4,6 @@
 #include <vcg/complex/algorithms/update/normal.h>
 #include <filesystem>
 #include <fstream>
-#include <future>
 #include <set>
 #include <map>
 #include <utility>
@@ -278,23 +277,6 @@ void JasMeshMarkAndCutSplit::debugWriteFacesOFF(
     ofs.close();
 }
 
-// 将多个子区域写入 OFF 调试文件
-void JasMeshMarkAndCutSplit::debugWriteSubRegionsOFF(
-    int iterIdx,
-    const std::vector<std::vector<int>>& subRegions
-)
-{
-    if (!m_debug)
-    {
-        return;
-    }
-    for (int regionIndex = 0; regionIndex < (int)subRegions.size(); regionIndex++)
-    {
-        std::string suffix = "sub_region_" + std::to_string(regionIndex);
-        debugWriteFacesOFF(iterIdx, suffix.c_str(), subRegions[regionIndex]);
-    }
-}
-
 // 将最终多边形写入 OBJ 调试文件
 void JasMeshMarkAndCutSplit::debugWritePolygonsOBJ(
     const std::map<int, std::vector<int>>& markToFaces
@@ -503,29 +485,35 @@ void JasMeshMarkAndCutSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRe
 
     // 阶段 2：局部独立切割（只读全局、写独立局部结果，并行执行）。
     std::vector<MeshCutByMark::LocalCutResult> allLocalResults(regionTasks.size());
-    std::vector<std::future<void>> futures;
-    for (size_t taskIndex = 0; taskIndex < regionTasks.size(); ++taskIndex)
+    const int taskCount = static_cast<int>(regionTasks.size());
+    #pragma omp parallel for
+    for (int taskIndex = 0; taskIndex < taskCount; ++taskIndex)
     {
-        futures.push_back(std::async(std::launch::async,
-            [this, &regionTasks, &allLocalResults, taskIndex]()
-            {
-                m_localMeshCut.prepareLocalCut(m_pMesh,
-                    regionTasks[taskIndex].curFaces,
-                    regionTasks[taskIndex].polylines,
-                    regionTasks[taskIndex].targetMark,
-                    allLocalResults[taskIndex]);
-            }));
-    }
-    for (auto& future : futures)
-    {
-        future.get();
+        m_localMeshCut.prepareLocalCut(m_pMesh,
+            regionTasks[taskIndex].curFaces,
+            regionTasks[taskIndex].polylines,
+            regionTasks[taskIndex].targetMark,
+            allLocalResults[taskIndex]);
     }
 
     // 阶段 3：串行写回全局并同步 newMark。
+    // 先构建「精确坐标 -> 全局顶点」索引，跨区域复用，避免切割线经过已有顶点
+    // 时追加坐标相同的重复顶点；mergeLocalCut 每追加新顶点会同步更新该索引。
+    std::map<jaslmc::ExactPoint, int> existingPointToVertex;
+    for (int vertexIndex = 0; vertexIndex < (int)m_pMesh->vert.size(); vertexIndex++)
+    {
+        if (m_pMesh->vert[vertexIndex].IsD())
+        {
+            continue;
+        }
+        const vcg::Point3d& point = m_pMesh->vert[vertexIndex].P();
+        existingPointToVertex[jaslmc::ExactPoint(point.X(), point.Y(), point.Z())] =
+            vertexIndex;
+    }
     for (auto& localResult : allLocalResults)
     {
         m_localMeshCut.mergeLocalCut(m_pMesh, localResult, m_regionMarker,
-            m_newMarkCounter);
+            m_newMarkCounter, existingPointToVertex);
     }
 
     // 统一缝合所有局部单元之间的拼接边：合并两侧切点顶点，对未切侧做纯分割，
@@ -541,6 +529,21 @@ void JasMeshMarkAndCutSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRe
         if (!m_pMesh->face[faceIndex].IsD())
         {
             markToFaces[m_regionMarker.getNewMark(faceIndex)].push_back(faceIndex);
+        }
+    }
+
+    // 防御：任何 newMark==0 的面（理论上已被 mergeLocalCut 的 dropped_faces 护栏
+    // 消除）都单独分配递增 newMark，绝不合并成一个假区域。
+    auto orphanIt = markToFaces.find(0);
+    if (orphanIt != markToFaces.end())
+    {
+        std::vector<int> orphanFaces = orphanIt->second;
+        markToFaces.erase(orphanIt);
+        for (int faceIndex : orphanFaces)
+        {
+            m_regionMarker.setNewMark(faceIndex, m_newMarkCounter);
+            markToFaces[m_newMarkCounter].push_back(faceIndex);
+            m_newMarkCounter++;
         }
     }
 

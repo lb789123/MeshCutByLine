@@ -184,6 +184,11 @@ inline void swap(CMeshOD& m1, CMeshOD& m2)
 	swap(m1.tetra_attr, m2.tetra_attr);
 	swap(m1.shot, m2.shot);
 	swap(m1.imark, m2.imark);
+	swap(m1.sfn, m2.sfn);
+	swap(m1.svn, m2.svn);
+	swap(m1.pvn, m2.pvn);
+	swap(m1.pfn, m2.pfn);
+	swap(m1.Tr, m2.Tr);
 }
 
 

@@ -47,7 +47,6 @@ MeshCutByLine/
 ├── tool/
 │   ├── edge_info.h          # 边信息数据结构
 │   ├── polyline.h           # 折线连接
-│   ├── cut_plane.h          # 切割平面构造
 │   ├── region_marker.h      # 区域标记
 │   ├── local_mesh_cut.h     # 局部 mesh 切割管线（LocalMeshCutManager）
 │   ├── cut_mesh.h           # 外部 cutter 契约（引用 cgalLocalMeshCut）

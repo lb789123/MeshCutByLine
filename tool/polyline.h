@@ -225,7 +225,9 @@ namespace MeshCutByMark
         std::vector<bool> &used,
         bool forward)
     {
-        // Append or prepend vertices while unused edges continue from currentVertex
+        // Append or prepend vertices while unused edges continue from currentVertex.
+        // 反向扩展先收集前缀，再一次性写回，避免 vector 前端插入的 O(n²) 成本。
+        std::vector<int> prependedVertices;
         while (true)
         {
             bool foundNext = false;
@@ -265,7 +267,7 @@ namespace MeshCutByMark
                 }
                 else
                 {
-                    polyline.vertexIndices.insert(polyline.vertexIndices.begin(), otherVertex);
+                    prependedVertices.push_back(otherVertex);
                     polyline.startFaceIdx = cutEdges[edgeIndex].faceIdx;
                     polyline.startEdgeIdx = cutEdges[edgeIndex].edgeIdx;
                 }
@@ -280,133 +282,222 @@ namespace MeshCutByMark
                 break;
             }
         }
+
+        if (!prependedVertices.empty())
+        {
+            std::vector<int> mergedVertices;
+            mergedVertices.reserve(prependedVertices.size() +
+                polyline.vertexIndices.size());
+            mergedVertices.insert(mergedVertices.end(),
+                prependedVertices.rbegin(), prependedVertices.rend());
+            mergedVertices.insert(mergedVertices.end(),
+                polyline.vertexIndices.begin(), polyline.vertexIndices.end());
+            polyline.vertexIndices = std::move(mergedVertices);
+        }
     }
 
     inline void PolylineManager::tryMergePolylines(std::vector<Polyline> &polylines)
     {
-        // Try to merge polylines with matching endpoints
+        // 按「端点 -> 折线」索引逐轮批量合并，避免反复从头扫描与向量 erase
+        // 导致的 O(n³) 退化。每轮结束后统一压缩已删除折线。
         bool merged = true;
         while (merged)
         {
             merged = false;
-            for (int polylineIndex = 0; polylineIndex < (int)polylines.size(); polylineIndex++)
+
+            std::map<int, std::vector<int>> startMap;
+            std::map<int, std::vector<int>> endMap;
+            for (int polylineIndex = 0;
+                 polylineIndex < (int)polylines.size(); ++polylineIndex)
             {
-                if (polylines[polylineIndex].isClosed)
+                const Polyline &polyline = polylines[polylineIndex];
+                if (polyline.isClosed)
+                {
+                    continue;
+                }
+                startMap[polyline.vertexIndices.front()].push_back(
+                    polylineIndex);
+                endMap[polyline.vertexIndices.back()].push_back(
+                    polylineIndex);
+            }
+
+            std::vector<char> removed(polylines.size(), 0);
+
+            for (int polylineIndex = 0;
+                 polylineIndex < (int)polylines.size(); ++polylineIndex)
+            {
+                if (removed[polylineIndex] || polylines[polylineIndex].isClosed)
                 {
                     continue;
                 }
 
-                for (int candidateIndex = polylineIndex + 1; candidateIndex < (int)polylines.size(); candidateIndex++)
+                const int firstStart = polylines[polylineIndex].vertexIndices.front();
+                const int firstEnd = polylines[polylineIndex].vertexIndices.back();
+                int candidateIndex = -1;
+                int mergeCase = -1;
+
+                auto pickCandidateByStart =
+                    [&](const std::vector<int> &indices, int expectedStart)
                 {
-                    if (polylines[candidateIndex].isClosed)
+                    for (int candidate : indices)
                     {
-                        continue;
+                        if (candidate == polylineIndex || removed[candidate] ||
+                            polylines[candidate].isClosed)
+                        {
+                            continue;
+                        }
+                        if (polylines[candidate].vertexIndices.front() ==
+                            expectedStart)
+                        {
+                            return candidate;
+                        }
                     }
+                    return -1;
+                };
 
-                    auto &firstPolyline = polylines[polylineIndex];
-                    auto &secondPolyline = polylines[candidateIndex];
-
-                    // Check if firstPolyline's end matches secondPolyline's start
-                    if (firstPolyline.vertexIndices.back() == secondPolyline.vertexIndices.front())
+                auto pickCandidateByEnd =
+                    [&](const std::vector<int> &indices, int expectedEnd)
+                {
+                    for (int candidate : indices)
                     {
-                        // Merge secondPolyline into firstPolyline
-                        for (int vertexIndex = 1; vertexIndex < (int)secondPolyline.vertexIndices.size(); vertexIndex++)
+                        if (candidate == polylineIndex || removed[candidate] ||
+                            polylines[candidate].isClosed)
                         {
-                            firstPolyline.vertexIndices.push_back(secondPolyline.vertexIndices[vertexIndex]);
+                            continue;
                         }
-                        firstPolyline.endFaceIdx = secondPolyline.endFaceIdx;
-                        firstPolyline.endEdgeIdx = secondPolyline.endEdgeIdx;
-
-                        // Check if closed
-                        if (firstPolyline.vertexIndices.front() == firstPolyline.vertexIndices.back())
+                        if (polylines[candidate].vertexIndices.back() ==
+                            expectedEnd)
                         {
-                            firstPolyline.isClosed = true;
+                            return candidate;
                         }
-
-                        polylines.erase(polylines.begin() + candidateIndex);
-                        merged = true;
-                        break;
                     }
+                    return -1;
+                };
 
-                    // Check if firstPolyline's start matches secondPolyline's end
-                    if (firstPolyline.vertexIndices.front() == secondPolyline.vertexIndices.back())
+                candidateIndex = pickCandidateByStart(startMap[firstEnd], firstEnd);
+                if (candidateIndex >= 0)
+                {
+                    mergeCase = 0;  // first.end -> second.start
+                }
+                if (candidateIndex < 0)
+                {
+                    candidateIndex = pickCandidateByEnd(endMap[firstStart], firstStart);
+                    if (candidateIndex >= 0)
                     {
-                        // Merge secondPolyline into firstPolyline (prepend)
-                        std::vector<int> mergedVertices;
-                        for (int vertexIndex = 0; vertexIndex < (int)secondPolyline.vertexIndices.size() - 1; vertexIndex++)
-                        {
-                            mergedVertices.push_back(secondPolyline.vertexIndices[vertexIndex]);
-                        }
-                        mergedVertices.insert(mergedVertices.end(), firstPolyline.vertexIndices.begin(), firstPolyline.vertexIndices.end());
-                        firstPolyline.vertexIndices = mergedVertices;
-                        firstPolyline.startFaceIdx = secondPolyline.startFaceIdx;
-                        firstPolyline.startEdgeIdx = secondPolyline.startEdgeIdx;
-
-                        // Check if closed
-                        if (firstPolyline.vertexIndices.front() == firstPolyline.vertexIndices.back())
-                        {
-                            firstPolyline.isClosed = true;
-                        }
-
-                        polylines.erase(polylines.begin() + candidateIndex);
-                        merged = true;
-                        break;
-                    }
-
-                    // Check if firstPolyline's end matches secondPolyline's end (reverse secondPolyline)
-                    if (firstPolyline.vertexIndices.back() == secondPolyline.vertexIndices.back())
-                    {
-                        // Reverse secondPolyline and merge
-                        std::vector<int> reversedCandidate(secondPolyline.vertexIndices.rbegin(), secondPolyline.vertexIndices.rend());
-                        for (int vertexIndex = 1; vertexIndex < (int)reversedCandidate.size(); vertexIndex++)
-                        {
-                            firstPolyline.vertexIndices.push_back(reversedCandidate[vertexIndex]);
-                        }
-                        firstPolyline.endFaceIdx = secondPolyline.startFaceIdx;
-                        firstPolyline.endEdgeIdx = secondPolyline.startEdgeIdx;
-
-                        // Check if closed
-                        if (firstPolyline.vertexIndices.front() == firstPolyline.vertexIndices.back())
-                        {
-                            firstPolyline.isClosed = true;
-                        }
-
-                        polylines.erase(polylines.begin() + candidateIndex);
-                        merged = true;
-                        break;
-                    }
-
-                    // Check if firstPolyline's start matches secondPolyline's start (reverse secondPolyline)
-                    if (firstPolyline.vertexIndices.front() == secondPolyline.vertexIndices.front())
-                    {
-                        // Reverse secondPolyline and prepend
-                        std::vector<int> reversedCandidate(secondPolyline.vertexIndices.rbegin(), secondPolyline.vertexIndices.rend());
-                        std::vector<int> mergedVertices;
-                        for (int vertexIndex = 0; vertexIndex < (int)reversedCandidate.size() - 1; vertexIndex++)
-                        {
-                            mergedVertices.push_back(reversedCandidate[vertexIndex]);
-                        }
-                        mergedVertices.insert(mergedVertices.end(), firstPolyline.vertexIndices.begin(), firstPolyline.vertexIndices.end());
-                        firstPolyline.vertexIndices = mergedVertices;
-                        firstPolyline.startFaceIdx = secondPolyline.endFaceIdx;
-                        firstPolyline.startEdgeIdx = secondPolyline.endEdgeIdx;
-
-                        // Check if closed
-                        if (firstPolyline.vertexIndices.front() == firstPolyline.vertexIndices.back())
-                        {
-                            firstPolyline.isClosed = true;
-                        }
-
-                        polylines.erase(polylines.begin() + candidateIndex);
-                        merged = true;
-                        break;
+                        mergeCase = 1;  // first.start <- second.end
                     }
                 }
-                if (merged)
+                if (candidateIndex < 0)
                 {
-                    break;
+                    candidateIndex = pickCandidateByEnd(endMap[firstEnd], firstEnd);
+                    if (candidateIndex >= 0)
+                    {
+                        mergeCase = 2;  // first.end <- reversed second.end
+                    }
+                }
+                if (candidateIndex < 0)
+                {
+                    candidateIndex = pickCandidateByStart(startMap[firstStart], firstStart);
+                    if (candidateIndex >= 0)
+                    {
+                        mergeCase = 3;  // first.start <- reversed second.start
+                    }
+                }
+
+                if (candidateIndex < 0)
+                {
+                    continue;
+                }
+
+                Polyline &firstPolyline = polylines[polylineIndex];
+                Polyline &secondPolyline = polylines[candidateIndex];
+
+                if (mergeCase == 0)
+                {
+                    for (int vertexIndex = 1;
+                         vertexIndex < (int)secondPolyline.vertexIndices.size();
+                         ++vertexIndex)
+                    {
+                        firstPolyline.vertexIndices.push_back(
+                            secondPolyline.vertexIndices[vertexIndex]);
+                    }
+                    firstPolyline.endFaceIdx = secondPolyline.endFaceIdx;
+                    firstPolyline.endEdgeIdx = secondPolyline.endEdgeIdx;
+                }
+                else if (mergeCase == 1)
+                {
+                    std::vector<int> mergedVertices;
+                    mergedVertices.reserve(secondPolyline.vertexIndices.size() +
+                        firstPolyline.vertexIndices.size() - 1);
+                    mergedVertices.insert(mergedVertices.end(),
+                        secondPolyline.vertexIndices.begin(),
+                        secondPolyline.vertexIndices.end() - 1);
+                    mergedVertices.insert(mergedVertices.end(),
+                        firstPolyline.vertexIndices.begin(),
+                        firstPolyline.vertexIndices.end());
+                    firstPolyline.vertexIndices = std::move(mergedVertices);
+                    firstPolyline.startFaceIdx = secondPolyline.startFaceIdx;
+                    firstPolyline.startEdgeIdx = secondPolyline.startEdgeIdx;
+                }
+                else if (mergeCase == 2)
+                {
+                    std::vector<int> reversedCandidate(
+                        secondPolyline.vertexIndices.rbegin(),
+                        secondPolyline.vertexIndices.rend());
+                    for (int vertexIndex = 1;
+                         vertexIndex < (int)reversedCandidate.size();
+                         ++vertexIndex)
+                    {
+                        firstPolyline.vertexIndices.push_back(
+                            reversedCandidate[vertexIndex]);
+                    }
+                    firstPolyline.endFaceIdx = secondPolyline.startFaceIdx;
+                    firstPolyline.endEdgeIdx = secondPolyline.startEdgeIdx;
+                }
+                else
+                {
+                    std::vector<int> reversedCandidate(
+                        secondPolyline.vertexIndices.rbegin(),
+                        secondPolyline.vertexIndices.rend());
+                    std::vector<int> mergedVertices;
+                    mergedVertices.reserve(reversedCandidate.size() +
+                        firstPolyline.vertexIndices.size() - 1);
+                    mergedVertices.insert(mergedVertices.end(),
+                        reversedCandidate.begin(), reversedCandidate.end() - 1);
+                    mergedVertices.insert(mergedVertices.end(),
+                        firstPolyline.vertexIndices.begin(),
+                        firstPolyline.vertexIndices.end());
+                    firstPolyline.vertexIndices = std::move(mergedVertices);
+                    firstPolyline.startFaceIdx = secondPolyline.endFaceIdx;
+                    firstPolyline.startEdgeIdx = secondPolyline.endEdgeIdx;
+                }
+
+                if (firstPolyline.vertexIndices.front() ==
+                    firstPolyline.vertexIndices.back())
+                {
+                    firstPolyline.isClosed = true;
+                }
+
+                removed[candidateIndex] = 1;
+                merged = true;
+            }
+
+            if (!merged)
+            {
+                break;
+            }
+
+            std::vector<Polyline> compacted;
+            compacted.reserve(polylines.size());
+            for (int polylineIndex = 0;
+                 polylineIndex < (int)polylines.size(); ++polylineIndex)
+            {
+                if (!removed[polylineIndex])
+                {
+                    compacted.push_back(std::move(polylines[polylineIndex]));
                 }
             }
+            polylines = std::move(compacted);
         }
     }
 

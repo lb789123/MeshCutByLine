@@ -2,6 +2,7 @@
 #ifndef REGION_MARKER_H
 #define REGION_MARKER_H
 
+#include <algorithm>
 #include <vector>
 #include <queue>
 #include "edge_info.h"
@@ -54,6 +55,10 @@ namespace MeshCutByMark
 
         // Per-face newMark storage (parallel to mesh->face)
         std::vector<int> m_newMark;
+
+        // 可复用访问标记：floodFill 每次调用递增 token，避免分配并清零全局面位图。
+        std::vector<int> m_visitMark;
+        int m_visitToken = 0;
     };
 
     // --- Implementations ---
@@ -62,6 +67,8 @@ namespace MeshCutByMark
     {
         // Reset the per-face mark storage to all zeros
         m_newMark.assign(mesh->face.size(), 0);
+        m_visitMark.assign(mesh->face.size(), 0);
+        m_visitToken = 0;
     }
 
     inline int RegionMarker::getNewMark(int faceIdx) const
@@ -120,16 +127,27 @@ namespace MeshCutByMark
         int startFaceIdx,
         int targetMark,
         CMeshOD *mesh,
-        const EdgeInfoManager & /*edgeInfo*/
+        const EdgeInfoManager & edgeInfo
     )
     {
         // Collect the connected region around startFaceIdx crossing only same-mark, non-cut edges
         std::vector<int> result;
         std::queue<int> queue;
 
-        std::vector<bool> visited(mesh->face.size(), false);
+        if (m_visitMark.size() < mesh->face.size())
+        {
+            m_visitMark.resize(mesh->face.size(), 0);
+        }
+        ++m_visitToken;
+        if (m_visitToken == 0)
+        {
+            std::fill(m_visitMark.begin(), m_visitMark.end(), 0);
+            ++m_visitToken;
+        }
+        const int currentToken = m_visitToken;
+
         queue.push(startFaceIdx);
-        visited[startFaceIdx] = true;
+        m_visitMark[startFaceIdx] = currentToken;
 
         while (!queue.empty())
         {
@@ -140,8 +158,11 @@ namespace MeshCutByMark
             // Traverse the three edges of this face
             for (int edgeIndex = 0; edgeIndex < 3; edgeIndex++)
             {
-                // Skip cut edges (boundary edges)
-                if (isCutEdge(faceIndex, edgeIndex, mesh))
+                // Skip cut edges classified by the edge-info manager, including
+                // mark-diff, boundary, and non-manifold edges.
+                int vertex0 = mesh->face[faceIndex].V(edgeIndex)->Index();
+                int vertex1 = mesh->face[faceIndex].V((edgeIndex + 1) % 3)->Index();
+                if (edgeInfo.isCutEdge(vertex0, vertex1))
                 {
                     continue;
                 }
@@ -152,7 +173,8 @@ namespace MeshCutByMark
                 );
 
                 // Check if adjacent face is valid and not visited
-                if (adjacentFaceIndex < 0 || visited[adjacentFaceIndex])
+                if (adjacentFaceIndex < 0 ||
+                    m_visitMark[adjacentFaceIndex] == currentToken)
                 {
                     continue;
                 }
@@ -163,7 +185,7 @@ namespace MeshCutByMark
                     continue;
                 }
 
-                visited[adjacentFaceIndex] = true;
+                m_visitMark[adjacentFaceIndex] = currentToken;
                 queue.push(adjacentFaceIndex);
             }
         }
