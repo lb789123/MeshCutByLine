@@ -1774,6 +1774,55 @@ void testSeamRedirectAfterSplit()
     std::cout << "testSeamRedirectAfterSplit passed" << std::endl;
 }
 
+void testComplexCutStress()
+{
+    const int cellCount = 4;
+    CMeshOD mesh = BuildTempGridMesh(cellCount, 0.15);
+    const int vertexPerSide = cellCount + 1;
+    mesh.face.EnableFFAdjacency();
+    mesh.face.EnableMark();
+    mesh.vert.EnableMark();
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+    vcg::tri::UpdateNormal<CMeshOD>::PerFace(mesh);
+    for (auto& face : mesh.face)
+    {
+        face.IMark() = 1;
+    }
+
+    std::vector<int> curFaces;
+    for (int faceIndex = 0; faceIndex < (int)mesh.face.size(); faceIndex++)
+    {
+        curFaces.push_back(faceIndex);
+    }
+
+    std::vector<std::vector<int>> polylineVertices = {
+        { 0, vertexPerSide + 1, 2 * (vertexPerSide + 1), 3 * (vertexPerSide + 1), 4 * (vertexPerSide + 1) },
+        { vertexPerSide - 1, vertexPerSide + 1, 2 * vertexPerSide + 1, 3 * vertexPerSide + 1, 4 * vertexPerSide },
+        { 2, 2 * vertexPerSide + 2, 4 * vertexPerSide + 2 },
+        { vertexPerSide, vertexPerSide + 2, 2 * vertexPerSide + 2, 3 * vertexPerSide + 2, 4 * vertexPerSide + 2 },
+        { 1, vertexPerSide + 1, 2 * vertexPerSide, 3 * vertexPerSide + 2, 4 * vertexPerSide + 1 },
+        { 0, vertexPerSide, 2 * vertexPerSide + 1, 3 * vertexPerSide + 1, 4 * vertexPerSide + 2 },
+        { 3, 2 * vertexPerSide + 1, 3 * vertexPerSide + 3, 4 * vertexPerSide + 3 },
+        { 4, 2 * vertexPerSide + 2, 3 * vertexPerSide + 1, 4 * vertexPerSide },
+    };
+    std::vector<MeshCutByMark::Polyline> polylines;
+    for (const auto& vertices : polylineVertices)
+    {
+        MeshCutByMark::Polyline polyline;
+        polyline.type = MeshCutByMark::CUT_EDGE_NON_MANIFOLD;
+        polyline.vertexIndices = vertices;
+        polylines.push_back(polyline);
+    }
+
+    MeshCutByMark::LocalMeshCutManager manager;
+    MeshCutByMark::LocalCutResult result;
+    manager.prepareLocalCut(&mesh, curFaces, polylines, 1, result);
+    std::cout << "complexCutStress: faces=" << result.exact.mesh.number_of_faces()
+        << " seams=" << result.exact.seams.size()
+        << " skipped=" << result.exact.skipped << std::endl;
+    std::cout << "testComplexCutStress passed" << std::endl;
+}
+
 int main() {
     testEdgeHash();
     testBuildEdgeInfo();
@@ -1807,5 +1856,6 @@ int main() {
     testSeamMultiExternal();
     testSeamRedirectAfterSplit();
     testExistingVertexReuse();
+    testComplexCutStress();
     return 0;
 }
