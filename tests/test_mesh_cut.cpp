@@ -1714,6 +1714,66 @@ void testExistingVertexReuse()
     std::cout << "testExistingVertexReuse passed" << std::endl;
 }
 
+// 回归：同一个外部面被两条缝边引用时，第一条缝边拆分后必须把第二条缝边的
+// 外部面引用重定向到包含该边的子面，否则第二条缝边会被漏掉并留下裂缝。
+void testSeamRedirectAfterSplit()
+{
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 5);
+    mesh.vert[0].P() = vcg::Point3d(0, 0, 0);
+    mesh.vert[1].P() = vcg::Point3d(2, 0, 0);
+    mesh.vert[2].P() = vcg::Point3d(0, 2, 0);
+    mesh.vert[3].P() = vcg::Point3d(1, 0, 0);
+    mesh.vert[4].P() = vcg::Point3d(1, 1, 0);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    mesh.face.EnableMark();
+    mesh.vert.EnableMark();
+    mesh.face[0].IMark() = 2;
+
+    MeshCutByMark::LocalCutResult resultA;
+    MeshCutByMark::SeamCutLine seamA;
+    seamA.globalVertexA = 0;
+    seamA.globalVertexB = 1;
+    seamA.externalFaceIndices.push_back(0);
+    MeshCutByMark::SeamCutPoint pointA;
+    pointA.globalVertexIndex = 3;
+    pointA.point = vcg::Point3d(1, 0, 0);
+    pointA.exactPoint = jaslmc::ExactPoint(1, 0, 0);
+    seamA.points.push_back(pointA);
+    resultA.seams.push_back(seamA);
+
+    MeshCutByMark::LocalCutResult resultB;
+    MeshCutByMark::SeamCutLine seamB;
+    seamB.globalVertexA = 1;
+    seamB.globalVertexB = 2;
+    seamB.externalFaceIndices.push_back(0);
+    MeshCutByMark::SeamCutPoint pointB;
+    pointB.globalVertexIndex = 4;
+    pointB.point = vcg::Point3d(1, 1, 0);
+    pointB.exactPoint = jaslmc::ExactPoint(1, 1, 0);
+    seamB.points.push_back(pointB);
+    resultB.seams.push_back(seamB);
+
+    MeshCutByMark::RegionMarker regionMarker;
+    regionMarker.initNewMark(&mesh);
+    MeshCutByMark::LocalMeshCutManager::stitchAllSeams(
+        &mesh, { resultA, resultB }, regionMarker);
+
+    int liveFaces = 0;
+    for (const auto& face : mesh.face)
+    {
+        if (!face.IsD())
+        {
+            liveFaces++;
+        }
+    }
+    std::cout << "seamRedirectAfterSplit: liveFaces=" << liveFaces
+        << " boundaryEdges=" << CountTempBoundaryEdges(mesh) << std::endl;
+    REQUIRE(mesh.face[0].IsD());
+    REQUIRE(liveFaces == 3);
+    std::cout << "testSeamRedirectAfterSplit passed" << std::endl;
+}
+
 int main() {
     testEdgeHash();
     testBuildEdgeInfo();
@@ -1745,6 +1805,7 @@ int main() {
     testStarVertexSkip();
     testSeamExactDedup();
     testSeamMultiExternal();
+    testSeamRedirectAfterSplit();
     testExistingVertexReuse();
     return 0;
 }

@@ -231,6 +231,30 @@ public:
                 {
                     regionMarker.setNewMark(subFaceIndex, inheritedNewMark);
                 }
+
+                // 该外部面被本次缝边分割后，其全局 face 下标已不再代表完整面；
+                // 若其他缝边也引用这个外部面，需要把引用重定向到包含对应缝边的子面，
+                // 否则后续缝边会因 faceHasEdge 失败而漏掉纯分割。
+                for (auto& otherEntry : seamExternalFaces)
+                {
+                    if (otherEntry.first == seamKey)
+                    {
+                        continue;
+                    }
+                    if (otherEntry.second.erase(externalFaceIndex) == 0)
+                    {
+                        continue;
+                    }
+                    for (int subFaceIndex : newSubFaces)
+                    {
+                        if (faceHasEdge(mesh, subFaceIndex,
+                            otherEntry.first.first, otherEntry.first.second))
+                        {
+                            otherEntry.second.insert(subFaceIndex);
+                            break;
+                        }
+                    }
+                }
             }
         }
     }
