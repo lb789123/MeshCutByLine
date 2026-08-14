@@ -1263,9 +1263,10 @@ void testPrepareLocalCutMarks()
 	{
 		marks.insert(result.exact.face_mark_map[faceIndex]);
 	}
-	std::cout << "prepareLocalCutMarks: distinctMarks=" << marks.size()
-		<< " liveFaces=" << result.exact.mesh.number_of_faces() << std::endl;
-	std::cout << "testPrepareLocalCutMarks passed" << std::endl;
+    std::cout << "prepareLocalCutMarks: distinctMarks=" << marks.size()
+        << " liveFaces=" << result.exact.mesh.number_of_faces() << std::endl;
+    REQUIRE(marks.size() == 2);
+    std::cout << "testPrepareLocalCutMarks passed" << std::endl;
 }
 
 // 回归：CutFacesExact 直接从全局面集构建 ExactMesh、切割、分区并收集缝边
@@ -1298,12 +1299,13 @@ void testCutFacesExact()
 	{
 		marks.insert(result.face_mark_map[face_index]);
 	}
-	std::cout << "cutFacesExact: ok=" << ok
-		<< " faces=" << result.mesh.number_of_faces()
-		<< " distinctMarks=" << marks.size()
-		<< " seams=" << result.seams.size()
-		<< " dropped=" << result.dropped_input_face_count << std::endl;
-	std::cout << "testCutFacesExact passed" << std::endl;
+    std::cout << "cutFacesExact: ok=" << ok
+        << " faces=" << result.mesh.number_of_faces()
+        << " distinctMarks=" << marks.size()
+        << " seams=" << result.seams.size()
+        << " dropped=" << result.dropped_input_face_count << std::endl;
+    REQUIRE(marks.size() == 2);
+    std::cout << "testCutFacesExact passed" << std::endl;
 }
 
 // 回归：SplitMeshByMarkAndEdge 输出多边形法向与内部三角形一致
