@@ -542,6 +542,227 @@ public:
         }
         result.faceGlobals = std::move(curFaces);
     }
+
+    // 并行阶段：多边形切割（独立于 prepareLocalCut）
+    void prepareLocalCutPolygon(CMeshOD* mesh, const std::vector<int>& curFaces,
+        const std::vector<Polyline>& polylines, int targetMark,
+        LocalCutResult& result)
+    {
+        // 1. 从 curFaces 边界环构建 CGAL 单多边形面 ExactMesh
+        jaslmc::ExactMesh exMesh;
+        jaslmc::CreateExactMesh(mesh, curFaces, exMesh);
+
+        // 星形顶点检测（仅当面数 >= 3 时）
+        if (curFaces.size() >= 3)
+        {
+            std::map<int, std::vector<int>> vertFaces;
+            std::map<std::pair<int,int>, std::vector<int>> edgeFaces;
+            for (int fi : curFaces)
+            {
+                if (mesh->face[fi].IsD()) continue;
+                for (int ei = 0; ei < 3; ei++)
+                {
+                    int va = mesh->face[fi].V(ei)->Index();
+                    int vb = mesh->face[fi].V((ei+1)%3)->Index();
+                    edgeFaces[std::minmax(va,vb)].push_back(fi);
+                    vertFaces[va].push_back(fi);
+                    vertFaces[vb].push_back(fi);
+                }
+            }
+            bool hasStarVert = false;
+            for (auto& [pivot, faces] : vertFaces)
+            {
+                std::set<int> faceSet(faces.begin(), faces.end());
+                std::set<int> visited;
+                int comps = 0;
+                for (int sf : faceSet)
+                {
+                    if (visited.count(sf)) continue;
+                    if (++comps > 1) { hasStarVert = true; break; }
+                    std::vector<int> stack{sf};
+                    visited.insert(sf);
+                    while (!stack.empty())
+                    {
+                        int cur = stack.back(); stack.pop_back();
+                        for (int ei = 0; ei < 3; ei++)
+                        {
+                            int va = mesh->face[cur].V(ei)->Index();
+                            int vb = mesh->face[cur].V((ei+1)%3)->Index();
+                            if (va != pivot && vb != pivot) continue;
+                            for (int adj : edgeFaces[std::minmax(va,vb)])
+                            {
+                                if (!visited.count(adj) && faceSet.count(adj))
+                                { visited.insert(adj); stack.push_back(adj); }
+                            }
+                        }
+                    }
+                }
+                if (hasStarVert) break;
+            }
+            if (hasStarVert)
+            {
+                result.exact.skipped = true;
+                result.faceGlobals = curFaces;
+                result.targetMark = targetMark;
+                return;
+            }
+        }
+
+        // 2. 收集边界顶点
+        std::set<int> boundaryVertices;
+        for (const auto& polyline : polylines)
+        {
+            if (polyline.type == CUT_EDGE_NON_MANIFOLD) continue;
+            for (int vi : polyline.vertexIndices) boundaryVertices.insert(vi);
+        }
+
+        // 3. 计算延长距离
+        vcg::Box3d box;
+        for (int fi : curFaces)
+            for (int ei = 0; ei < 3; ei++)
+                box.Add(mesh->face[fi].V(ei)->P());
+        double diag = box.Diag();
+        if (diag < 1e-9) diag = 1.0;
+        vcg::Point3d regionNormal = mesh->face[curFaces.front()].N();
+        if (regionNormal.Norm() < 1e-9) regionNormal = vcg::Point3d(0, 0, 1);
+
+        // 4. 构建切割线
+        std::vector<jaslmc::ExactPoint> normals;
+        std::vector<std::vector<jaslmc::ExactPoint>> cutLines;
+        for (const auto& polyline : polylines)
+        {
+            if (polyline.type != CUT_EDGE_NON_MANIFOLD) continue;
+            std::vector<jaslmc::ExactPoint> exactLine;
+            bool extStart = boundaryVertices.count(polyline.vertexIndices.front()) == 0;
+            bool extEnd = boundaryVertices.count(polyline.vertexIndices.back()) == 0;
+            if (extStart)
+            {
+                vcg::Point3d dir = mesh->vert[polyline.vertexIndices[0]].P() -
+                    mesh->vert[polyline.vertexIndices[1]].P();
+                dir.Normalize();
+                vcg::Point3d pt = mesh->vert[polyline.vertexIndices.front()].P() + dir * diag;
+                exactLine.push_back(jaslmc::ExactPoint(pt.X(), pt.Y(), pt.Z()));
+            }
+            for (int vi : polyline.vertexIndices)
+            {
+                const auto& pt = mesh->vert[vi].P();
+                exactLine.push_back(jaslmc::ExactPoint(pt.X(), pt.Y(), pt.Z()));
+            }
+            if (extEnd)
+            {
+                int n = (int)polyline.vertexIndices.size();
+                vcg::Point3d dir = mesh->vert[polyline.vertexIndices[n-1]].P() -
+                    mesh->vert[polyline.vertexIndices[n-2]].P();
+                dir.Normalize();
+                vcg::Point3d pt = mesh->vert[polyline.vertexIndices.back()].P() + dir * diag;
+                exactLine.push_back(jaslmc::ExactPoint(pt.X(), pt.Y(), pt.Z()));
+            }
+            normals.push_back(jaslmc::ExactPoint(regionNormal.X(), regionNormal.Y(), regionNormal.Z()));
+            cutLines.push_back(std::move(exactLine));
+        }
+
+        // 5. 2D 多边形切割
+        result.faceGlobals = curFaces;
+        result.targetMark = targetMark;
+        jaslmc::CutMeshExact(exMesh, normals, cutLines, result.exact);
+    }
+
+    // 从 allLocalResults 构建全局 PolygonMesh，局部转全局，缝合边加点。
+    static void buildGlobalPolygonAndStitch(
+        CMeshOD* mesh,
+        const std::vector<LocalCutResult>& allLocalResults,
+        const EdgeInfoManager& edgeInfo,
+        jaslmc::PolygonMesh& globalPoly)
+    {
+        globalPoly.clear();
+        std::map<jaslmc::ExactPoint, int> exactToPoly;
+        for (int vi = 0; vi < (int)mesh->vert.size(); vi++) {
+            if (mesh->vert[vi].IsD()) continue;
+            const vcg::Point3d& p = mesh->vert[vi].P();
+            jaslmc::ExactPoint ep(p.X(), p.Y(), p.Z());
+            if (exactToPoly.find(ep) == exactToPoly.end())
+                exactToPoly[ep] = globalPoly.addVertex(ep, vi);
+        }
+        struct SeamInfo { int polyVA, polyVB; std::vector<jaslmc::ExactPoint> cutPoints; };
+        std::map<std::pair<int,int>, SeamInfo> seamEdges;
+        for (const auto& lr : allLocalResults) {
+            if (lr.exact.skipped) continue;
+            const jaslmc::PolygonMesh& lp = lr.exact.polyResult;
+            std::map<int,int> localToGlobal;
+            for (int lvi = 0; lvi < (int)lp.vertices.size(); lvi++) {
+                const jaslmc::PolygonVertex& lv = lp.vertices[lvi];
+                jaslmc::ExactPoint ep = lv.point;
+                if (lv.globalIndex >= 0) {
+                    const vcg::Point3d& gp = mesh->vert[lv.globalIndex].P();
+                    ep = jaslmc::ExactPoint(gp.X(), gp.Y(), gp.Z());
+                }
+                auto it = exactToPoly.find(ep);
+                if (it != exactToPoly.end()) localToGlobal[lvi] = it->second;
+                else {
+                    int gi = (lv.globalIndex >= 0) ? lv.globalIndex : -1;
+                    localToGlobal[lvi] = globalPoly.addVertex(ep, gi);
+                    exactToPoly[ep] = localToGlobal[lvi];
+                }
+            }
+            for (int lfi = 0; lfi < (int)lp.faces.size(); lfi++) {
+                const jaslmc::PolygonFace& lf = lp.faces[lfi];
+                if (!lf.isValid()) continue;
+                std::vector<int> gvis;
+                for (int lvi : lf.vertexIndices) {
+                    auto it = localToGlobal.find(lvi);
+                    if (it != localToGlobal.end()) gvis.push_back(it->second);
+                }
+                if (gvis.size() < 3) continue;
+                globalPoly.addFace(gvis, lf.mark);
+                int nv = (int)gvis.size();
+                for (int ei = 0; ei < nv; ei++) {
+                    int va = gvis[ei], vb = gvis[(ei+1) % nv];
+                    auto adj = globalPoly.getAdjacentFaces(va, vb);
+                    if (adj.size() >= 2) {
+                        auto key = std::make_pair(std::min(va,vb), std::max(va,vb));
+                        if (seamEdges.find(key) == seamEdges.end()) {
+                            SeamInfo s; s.polyVA = std::min(va,vb); s.polyVB = std::max(va,vb);
+                            seamEdges[key] = s;
+                        }
+                    }
+                }
+            }
+            for (const auto& seam : lr.exact.seams) {
+                const vcg::Point3d& pa = mesh->vert[seam.global_vertex_a].P();
+                const vcg::Point3d& pb = mesh->vert[seam.global_vertex_b].P();
+                jaslmc::ExactPoint epa(pa.X(), pa.Y(), pa.Z());
+                jaslmc::ExactPoint epb(pb.X(), pb.Y(), pb.Z());
+                auto itA = exactToPoly.find(epa); auto itB = exactToPoly.find(epb);
+                if (itA == exactToPoly.end() || itB == exactToPoly.end()) continue;
+                auto key = std::make_pair(std::min(itA->second, itB->second), std::max(itA->second, itB->second));
+                auto si = seamEdges.find(key);
+                if (si != seamEdges.end())
+                    for (const auto& pt : seam.points) si->second.cutPoints.push_back(pt.point);
+            }
+        }
+        for (auto& [key, seam] : seamEdges) {
+            if (seam.cutPoints.empty()) continue;
+            std::sort(seam.cutPoints.begin(), seam.cutPoints.end());
+            seam.cutPoints.erase(std::unique(seam.cutPoints.begin(), seam.cutPoints.end()), seam.cutPoints.end());
+            const auto& epA = globalPoly.vertices[seam.polyVA].point;
+            const auto& epB = globalPoly.vertices[seam.polyVB].point;
+            auto dirAB = epB - epA;
+            double lenSq = CGAL::to_double(dirAB.squared_length());
+            if (lenSq < 1e-20) continue;
+            std::vector<std::pair<double, jaslmc::ExactPoint>> ordered;
+            for (const auto& pt : seam.cutPoints) {
+                double t = CGAL::to_double((pt - epA) * dirAB) / lenSq;
+                ordered.push_back({t, pt});
+            }
+            std::sort(ordered.begin(), ordered.end());
+            int curA = seam.polyVA;
+            for (const auto& [t, pt] : ordered) {
+                if (pt == globalPoly.vertices[curA].point) continue;
+                if (pt == globalPoly.vertices[seam.polyVB].point) continue;
+                curA = globalPoly.splitEdge(curA, seam.polyVB, pt);
+            }
+        }
+    }
 };
 
 } // namespace MeshCutByMark

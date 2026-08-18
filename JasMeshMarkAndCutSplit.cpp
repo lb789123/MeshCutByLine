@@ -1,4 +1,4 @@
-#include "JasMeshMarkAndCutSplit.h"
+﻿#include "JasMeshMarkAndCutSplit.h"
 #include "JasMeshLocalMarkAndCutSplitInternal.h"
 #include <vcg/complex/algorithms/update/topology.h>
 #include <vcg/complex/algorithms/update/normal.h>
@@ -486,10 +486,66 @@ void JasMeshMarkAndCutSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRe
     // 阶段 2：局部独立切割（只读全局、写独立局部结果，并行执行）。
     std::vector<MeshCutByMark::LocalCutResult> allLocalResults(regionTasks.size());
     const int taskCount = static_cast<int>(regionTasks.size());
+
+    // 全局星形顶点检测：如果存在非流形顶点，跳过多边形切割流程
+    bool hasGlobalStarVert = false;
+    {
+        std::map<int, std::vector<int>> vertFaces;
+        std::map<std::pair<int,int>, std::vector<int>> edgeFaces;
+        for (int fi = 0; fi < (int)m_pMesh->face.size(); fi++)
+        {
+            if (m_pMesh->face[fi].IsD()) continue;
+            for (int ei = 0; ei < 3; ei++)
+            {
+                int va = m_pMesh->face[fi].V(ei)->Index();
+                int vb = m_pMesh->face[fi].V((ei+1)%3)->Index();
+                edgeFaces[std::minmax(va,vb)].push_back(fi);
+                vertFaces[va].push_back(fi);
+                vertFaces[vb].push_back(fi);
+            }
+        }
+        for (auto& [pivot, faces] : vertFaces)
+        {
+            std::set<int> faceSet(faces.begin(), faces.end());
+            std::set<int> visited;
+            int comps = 0;
+            for (int sf : faceSet)
+            {
+                if (visited.count(sf)) continue;
+                if (++comps > 1) { hasGlobalStarVert = true; break; }
+                std::vector<int> stack{sf};
+                visited.insert(sf);
+                while (!stack.empty())
+                {
+                    int cur = stack.back(); stack.pop_back();
+                    for (int ei = 0; ei < 3; ei++)
+                    {
+                        int va = m_pMesh->face[cur].V(ei)->Index();
+                        int vb = m_pMesh->face[cur].V((ei+1)%3)->Index();
+                        if (va != pivot && vb != pivot) continue;
+                        for (int adj : edgeFaces[std::minmax(va,vb)])
+                        {
+                            if (!visited.count(adj) && faceSet.count(adj))
+                            { visited.insert(adj); stack.push_back(adj); }
+                        }
+                    }
+                }
+            }
+            if (hasGlobalStarVert) break;
+        }
+    }
+
     #pragma omp parallel for
     for (int taskIndex = 0; taskIndex < taskCount; ++taskIndex)
     {
-        m_localMeshCut.prepareLocalCut(m_pMesh,
+        if (hasGlobalStarVert)
+            m_localMeshCut.prepareLocalCut(m_pMesh,
+                regionTasks[taskIndex].curFaces,
+                regionTasks[taskIndex].polylines,
+                regionTasks[taskIndex].targetMark,
+                allLocalResults[taskIndex]);
+        else
+            m_localMeshCut.prepareLocalCutPolygon(m_pMesh,
             regionTasks[taskIndex].curFaces,
             regionTasks[taskIndex].polylines,
             regionTasks[taskIndex].targetMark,
@@ -521,6 +577,11 @@ void JasMeshMarkAndCutSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRe
     m_localMeshCut.stitchAllSeams(m_pMesh, allLocalResults, m_regionMarker);
     vcg::tri::UpdateTopology<CMeshOD>::FaceFace(*m_pMesh);
     vcg::tri::UpdateNormal<CMeshOD>::PerFace(*m_pMesh);
+
+    // 构建全局 PolygonMesh，局部转全局，缝合边加点。
+    jaslmc::PolygonMesh globalPoly;
+    m_localMeshCut.buildGlobalPolygonAndStitch(
+        m_pMesh, allLocalResults, m_edgeInfoManager, globalPoly);
 
     // Phase 3: 根据新标记提取多边形
     std::map<int, std::vector<int>> markToFaces;
@@ -554,8 +615,41 @@ void JasMeshMarkAndCutSplit::SplitMeshByMarkAndEdge(std::vector<splitReg>& retRe
     for (const auto& [newMark, faces] : markToFaces)
     {
         // 提取边界环（外圈 + 洞），由外部库 cgalLocalMeshCut 提供
-        std::vector<std::vector<int>> boundaries =
-            jaslmc::SubRegionBoundary(*m_pMesh, faces);
+        // 从全局 PolygonMesh 获取边界
+        std::vector<std::vector<int>> boundaries;
+        for (int pfi = 0; pfi < (int)globalPoly.faces.size(); pfi++)
+        {
+            const auto& pface = globalPoly.faces[pfi];
+            if (!pface.isValid() || pface.mark != newMark) continue;
+            std::vector<int> loop;
+            for (int vi : pface.vertexIndices)
+            {
+                int gi = globalPoly.vertices[vi].globalIndex;
+                if (gi >= 0) loop.push_back(gi);
+            }
+            if (loop.size() >= 3) boundaries.push_back(loop);
+        }
+        if (boundaries.empty())
+        {
+        // 从全局 PolygonMesh 获取边界
+        std::vector<std::vector<int>> boundaries;
+        for (int pfi = 0; pfi < (int)globalPoly.faces.size(); pfi++)
+        {
+            const auto& pface = globalPoly.faces[pfi];
+            if (!pface.isValid() || pface.mark != newMark) continue;
+            std::vector<int> loop;
+            for (int vi : pface.vertexIndices)
+            {
+                int gi = globalPoly.vertices[vi].globalIndex;
+                if (gi >= 0) loop.push_back(gi);
+            }
+            if (loop.size() >= 3) boundaries.push_back(loop);
+        }
+        if (boundaries.empty())
+        {
+            boundaries = jaslmc::SubRegionBoundary(*m_pMesh, faces);
+        }
+        }
 
         // 构造 splitReg
         splitReg region;
