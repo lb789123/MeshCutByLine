@@ -1,6 +1,7 @@
 #ifndef LOCAL_CUT_RESULT_H
 #define LOCAL_CUT_RESULT_H
 
+#include <map>
 #include <vector>
 #include <utility>
 #include "cmesh.h"
@@ -38,6 +39,19 @@ struct LocalCutResult
     int targetMark = 0;
     jaslmc::ExactCutResult exact;      // 切好且分区好的局部 ExactMesh 与映射
     std::vector<SeamCutLine> seams;    // 合并阶段映射后的全局拼接边切点表
+
+    // 多边形切割路径（prepareLocalCutPolygon）标记：合并阶段改走
+    // mergeLocalCutPolygon，不写回/不切分全局面，也不产生 seams。
+    bool usePolygonPath = false;
+    // 多边形路径合并阶段追加的切点孤立顶点（全局下标 + 精确坐标）。
+    // 切点可能落在与邻域共享的 mark-diff 边上，但邻域不沿同一条线切割，
+    // 其边界环不会细分该边；主流程据此在 Phase 3 做跨区域切点 splice，
+    // 保证邻接区域输出环共享同一顶点细分序列（消除 T 形结）。
+    std::vector<std::pair<int, jaslmc::ExactPoint>> orphanCutPoints;
+    // 多边形路径合并阶段输出：newMark -> 边界环（外圈在前，其余为洞），
+    // 环内为全局顶点下标（含追加的切点孤立顶点）。空表示该 newMark
+    // 需回退 SubRegionBoundary 提取。
+    std::map<int, std::vector<std::vector<int>>> polyLoops;
 };
 
 } // namespace MeshCutByMark

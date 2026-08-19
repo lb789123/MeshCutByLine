@@ -11,6 +11,7 @@
 #include "region_marker.h"
 #include "cut_mesh.h"
 #include "local_cut_result.h"
+#include "polygon_mesh.h"
 
 namespace MeshCutByMark
 {
@@ -667,99 +668,207 @@ public:
         jaslmc::CutMeshExact(exMesh, normals, cutLines, result.exact);
     }
 
-    // 从 allLocalResults 构建全局 PolygonMesh，局部转全局，缝合边加点。
-    static void buildGlobalPolygonAndStitch(
-        CMeshOD* mesh,
-        const std::vector<LocalCutResult>& allLocalResults,
-        const EdgeInfoManager& edgeInfo,
-        jaslmc::PolygonMesh& globalPoly)
+    // 串行阶段（多边形路径）：与 mergeLocalCut 平行的独立合并。
+    // 多边形路径不切分、不改写任何全局面 —— 原始三角形保持原样，只做三件事：
+    //   1. 把 polyResult 顶点按精确坐标映射到全局顶点，切点按需追加为
+    //      孤立顶点（不改任何面引用，记录进 orphanCutPoints），使边界环
+    //      可引用真实全局下标；
+    //   2. 把区域原始面按「质心落在哪个分片」分配给各组（划分保证：
+    //      每个面恰好属于一个 newMark，绝不产生 newMark=0 孤儿面）；
+    //   3. 为非空组分配 newMark 并记录边界环（polyLoops）。
+    // 被切线穿过但质心落到另一侧的三角形归属近似；无完整三角形落入的
+    // 极窄分片不分配 newMark（不输出区域，见 README 已知限制）。
+    // 注意：切点只出现在「拥有该切割线的区域」的环上 —— 与邻域共享的
+    // mark-diff 边另一侧不细分（T 形结），两侧独立计算的切点也不精确
+    // 相等。跨区域共形由主流程的 conformSharedEdgeCutPoints 统一 splice，
+    // 本函数只负责把切点如数记录到 orphanCutPoints。
+    void mergeLocalCutPolygon(CMeshOD* mesh, LocalCutResult& result,
+        RegionMarker& regionMarker, int& newMarkCounter,
+        std::map<jaslmc::ExactPoint, int>& existingPointToVertex)
     {
-        globalPoly.clear();
-        std::map<jaslmc::ExactPoint, int> exactToPoly;
-        for (int vi = 0; vi < (int)mesh->vert.size(); vi++) {
-            if (mesh->vert[vi].IsD()) continue;
-            const vcg::Point3d& p = mesh->vert[vi].P();
-            jaslmc::ExactPoint ep(p.X(), p.Y(), p.Z());
-            if (exactToPoly.find(ep) == exactToPoly.end())
-                exactToPoly[ep] = globalPoly.addVertex(ep, vi);
+        const jaslmc::ExactCutResult& exact = result.exact;
+        regionMarker.growNewMark(mesh->face.size());
+
+        // 整区一个 newMark 的情形：星形顶点保守跳过，或 CreateExactMesh
+        // 未能构成有效多边形（不成环等）。polyLoops 留空，Phase 3 回退
+        // SubRegionBoundary 在原始网格上提取（网格未被修改，结果有效）。
+        bool hasValidFace = false;
+        for (const auto& face : exact.polyResult.faces)
+        {
+            if (face.isValid())
+            {
+                hasValidFace = true;
+                break;
+            }
         }
-        struct SeamInfo { int polyVA, polyVB; std::vector<jaslmc::ExactPoint> cutPoints; };
-        std::map<std::pair<int,int>, SeamInfo> seamEdges;
-        for (const auto& lr : allLocalResults) {
-            if (lr.exact.skipped) continue;
-            const jaslmc::PolygonMesh& lp = lr.exact.polyResult;
-            std::map<int,int> localToGlobal;
-            for (int lvi = 0; lvi < (int)lp.vertices.size(); lvi++) {
-                const jaslmc::PolygonVertex& lv = lp.vertices[lvi];
-                jaslmc::ExactPoint ep = lv.point;
-                if (lv.globalIndex >= 0) {
-                    const vcg::Point3d& gp = mesh->vert[lv.globalIndex].P();
-                    ep = jaslmc::ExactPoint(gp.X(), gp.Y(), gp.Z());
+        if (exact.skipped || !hasValidFace)
+        {
+            for (int faceIndex : result.faceGlobals)
+            {
+                if (faceIndex < 0 ||
+                    faceIndex >= (int)mesh->face.size() ||
+                    mesh->face[faceIndex].IsD())
+                {
+                    continue;
                 }
-                auto it = exactToPoly.find(ep);
-                if (it != exactToPoly.end()) localToGlobal[lvi] = it->second;
-                else {
-                    int gi = (lv.globalIndex >= 0) ? lv.globalIndex : -1;
-                    localToGlobal[lvi] = globalPoly.addVertex(ep, gi);
-                    exactToPoly[ep] = localToGlobal[lvi];
+                regionMarker.setNewMark(faceIndex, newMarkCounter);
+            }
+            newMarkCounter++;
+            return;
+        }
+
+        const jaslmc::PolygonMesh& poly = exact.polyResult;
+
+        // 1. 同 mark 连通分组。
+        std::vector<std::vector<int>> groups;
+        groupPolygonFacesByMark(poly, groups);
+
+        // 2. 顶点映射：polyResult 的 globalIndex 恒为 -1（CutMeshExact 不
+        //    填 v:g），一律按精确坐标匹配；未命中的是切点，追加为孤立顶点。
+        std::map<int, int> localToGlobal;
+        for (int lvi = 0; lvi < (int)poly.vertices.size(); lvi++)
+        {
+            const jaslmc::ExactPoint& point = poly.vertices[lvi].point;
+            auto existing = existingPointToVertex.find(point);
+            if (existing != existingPointToVertex.end())
+            {
+                localToGlobal[lvi] = existing->second;
+                continue;
+            }
+            auto newVertex = vcg::tri::Allocator<CMeshOD>::AddVertices(*mesh, 1);
+            newVertex->P() = vcg::Point3d(CGAL::to_double(point.x()),
+                CGAL::to_double(point.y()), CGAL::to_double(point.z()));
+            const int globalIndex = (int)mesh->vert.size() - 1;
+            localToGlobal[lvi] = globalIndex;
+            existingPointToVertex[point] = globalIndex;
+            // 记录切点孤立顶点：跨区域共形 pass 依据它把共享边上的切点
+            // splice 进邻域边界环（见 conformSharedEdgeCutPoints）。
+            result.orphanCutPoints.push_back({ globalIndex, point });
+        }
+
+        // 3. 区域法向（PIP 投影轴与环定向参考）。
+        vcg::Point3d regionNormal(0, 0, 0);
+        for (int faceIndex : result.faceGlobals)
+        {
+            if (faceIndex >= 0 && faceIndex < (int)mesh->face.size() &&
+                !mesh->face[faceIndex].IsD())
+            {
+                regionNormal += mesh->face[faceIndex].N();
+            }
+        }
+        if (regionNormal.Norm() < 1e-12)
+        {
+            regionNormal = vcg::Point3d(0, 0, 1);
+        }
+        else
+        {
+            regionNormal.Normalize();
+        }
+        int dropAxis = 0;
+        if (std::abs(regionNormal.Y()) > std::abs(regionNormal[dropAxis]))
+        {
+            dropAxis = 1;
+        }
+        if (std::abs(regionNormal.Z()) > std::abs(regionNormal[dropAxis]))
+        {
+            dropAxis = 2;
+        }
+
+        // 4. 质心分配：每个原始面归属质心所在的分片组；全部未命中时
+        //    兜底到第一组（切点退化/CutMeshExact 丢弃子多边形留下缝隙时
+        //    保持划分完整）。逐组逐面测试，第一个命中即停。
+        std::vector<std::vector<jaslmc::ExactPoint>> groupLoops;
+        for (const auto& group : groups)
+        {
+            for (int fi : group)
+            {
+                std::vector<jaslmc::ExactPoint> loop;
+                for (int lvi : poly.faces[fi].vertexIndices)
+                {
+                    loop.push_back(poly.vertices[lvi].point);
+                }
+                groupLoops.push_back(std::move(loop));
+            }
+        }
+        std::vector<std::vector<int>> groupGlobalFaces(groups.size());
+        for (int faceIndex : result.faceGlobals)
+        {
+            if (faceIndex < 0 || faceIndex >= (int)mesh->face.size() ||
+                mesh->face[faceIndex].IsD())
+            {
+                continue;
+            }
+            jaslmc::ExactPoint centroid;
+            {
+                const vcg::Point3d& p0 = mesh->face[faceIndex].V(0)->P();
+                const vcg::Point3d& p1 = mesh->face[faceIndex].V(1)->P();
+                const vcg::Point3d& p2 = mesh->face[faceIndex].V(2)->P();
+                centroid = jaslmc::ExactPoint(
+                    (jaslmc::Kernel::FT(p0.X()) +
+                     jaslmc::Kernel::FT(p1.X()) +
+                     jaslmc::Kernel::FT(p2.X())) / 3,
+                    (jaslmc::Kernel::FT(p0.Y()) +
+                     jaslmc::Kernel::FT(p1.Y()) +
+                     jaslmc::Kernel::FT(p2.Y())) / 3,
+                    (jaslmc::Kernel::FT(p0.Z()) +
+                     jaslmc::Kernel::FT(p1.Z()) +
+                     jaslmc::Kernel::FT(p2.Z())) / 3);
+            }
+            int matched = -1;
+            int cursor = 0;
+            for (size_t gi = 0; gi < groups.size() && matched < 0; gi++)
+            {
+                for (size_t k = 0; k < groups[gi].size(); k++)
+                {
+                    if (pointInPolygonExact(groupLoops[cursor], centroid, dropAxis))
+                    {
+                        matched = (int)gi;
+                        break;
+                    }
+                    cursor++;
                 }
             }
-            for (int lfi = 0; lfi < (int)lp.faces.size(); lfi++) {
-                const jaslmc::PolygonFace& lf = lp.faces[lfi];
-                if (!lf.isValid()) continue;
-                std::vector<int> gvis;
-                for (int lvi : lf.vertexIndices) {
+            if (matched < 0)
+            {
+                matched = 0;  // 确定性兜底
+            }
+            groupGlobalFaces[matched].push_back(faceIndex);
+        }
+
+        // 5. 非空组分配 newMark 并记录边界环（全局顶点下标）。
+        for (size_t gi = 0; gi < groups.size(); gi++)
+        {
+            if (groupGlobalFaces[gi].empty())
+            {
+                continue;
+            }
+            const int newMark = newMarkCounter++;
+            for (int faceIndex : groupGlobalFaces[gi])
+            {
+                regionMarker.setNewMark(faceIndex, newMark);
+            }
+            std::vector<std::vector<int>> localLoops;
+            polygonGroupBoundaryLoops(poly, groups[gi], regionNormal, localLoops);
+            std::vector<std::vector<int>> globalLoops;
+            for (const auto& localLoop : localLoops)
+            {
+                std::vector<int> globalLoop;
+                for (int lvi : localLoop)
+                {
                     auto it = localToGlobal.find(lvi);
-                    if (it != localToGlobal.end()) gvis.push_back(it->second);
-                }
-                if (gvis.size() < 3) continue;
-                globalPoly.addFace(gvis, lf.mark);
-                int nv = (int)gvis.size();
-                for (int ei = 0; ei < nv; ei++) {
-                    int va = gvis[ei], vb = gvis[(ei+1) % nv];
-                    auto adj = globalPoly.getAdjacentFaces(va, vb);
-                    if (adj.size() >= 2) {
-                        auto key = std::make_pair(std::min(va,vb), std::max(va,vb));
-                        if (seamEdges.find(key) == seamEdges.end()) {
-                            SeamInfo s; s.polyVA = std::min(va,vb); s.polyVB = std::max(va,vb);
-                            seamEdges[key] = s;
-                        }
+                    if (it != localToGlobal.end())
+                    {
+                        globalLoop.push_back(it->second);
                     }
                 }
+                if (globalLoop.size() >= 3)
+                {
+                    globalLoops.push_back(std::move(globalLoop));
+                }
             }
-            for (const auto& seam : lr.exact.seams) {
-                const vcg::Point3d& pa = mesh->vert[seam.global_vertex_a].P();
-                const vcg::Point3d& pb = mesh->vert[seam.global_vertex_b].P();
-                jaslmc::ExactPoint epa(pa.X(), pa.Y(), pa.Z());
-                jaslmc::ExactPoint epb(pb.X(), pb.Y(), pb.Z());
-                auto itA = exactToPoly.find(epa); auto itB = exactToPoly.find(epb);
-                if (itA == exactToPoly.end() || itB == exactToPoly.end()) continue;
-                auto key = std::make_pair(std::min(itA->second, itB->second), std::max(itA->second, itB->second));
-                auto si = seamEdges.find(key);
-                if (si != seamEdges.end())
-                    for (const auto& pt : seam.points) si->second.cutPoints.push_back(pt.point);
-            }
-        }
-        for (auto& [key, seam] : seamEdges) {
-            if (seam.cutPoints.empty()) continue;
-            std::sort(seam.cutPoints.begin(), seam.cutPoints.end());
-            seam.cutPoints.erase(std::unique(seam.cutPoints.begin(), seam.cutPoints.end()), seam.cutPoints.end());
-            const auto& epA = globalPoly.vertices[seam.polyVA].point;
-            const auto& epB = globalPoly.vertices[seam.polyVB].point;
-            auto dirAB = epB - epA;
-            double lenSq = CGAL::to_double(dirAB.squared_length());
-            if (lenSq < 1e-20) continue;
-            std::vector<std::pair<double, jaslmc::ExactPoint>> ordered;
-            for (const auto& pt : seam.cutPoints) {
-                double t = CGAL::to_double((pt - epA) * dirAB) / lenSq;
-                ordered.push_back({t, pt});
-            }
-            std::sort(ordered.begin(), ordered.end());
-            int curA = seam.polyVA;
-            for (const auto& [t, pt] : ordered) {
-                if (pt == globalPoly.vertices[curA].point) continue;
-                if (pt == globalPoly.vertices[seam.polyVB].point) continue;
-                curA = globalPoly.splitEdge(curA, seam.polyVB, pt);
+            if (!globalLoops.empty())
+            {
+                result.polyLoops[newMark] = std::move(globalLoops);
             }
         }
     }

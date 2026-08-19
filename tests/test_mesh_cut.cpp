@@ -1,4 +1,8 @@
 // tests/test_mesh_cut.cpp
+// Release 配置下 CMake 默认带 NDEBUG，会把裸 assert 编译成空操作，测试形同虚设
+// （2026-08 多边形切割路径回归正是因此漏网）。在包含 <cassert> 前取消 NDEBUG，
+// 保证断言在 Debug/Release 两种配置下都生效。
+#undef NDEBUG
 #include <iostream>
 #include <cassert>
 #include <algorithm>
@@ -1823,6 +1827,515 @@ void testComplexCutStress()
     std::cout << "testComplexCutStress passed" << std::endl;
 }
 
+// 回归（多边形切割路径）：prepareLocalCutPolygon + mergeLocalCutPolygon 直连。
+// 内部顶点风扇网格 + 悬空切割线（无边界折线 → 双向延长）穿出区域边界内部，
+// 产生真实切点。验证独立合并的契约：不切分/不复制任何面、无孤儿 newMark、
+// 切点以孤立顶点追加、边界环全部引用有效全局下标且包含切点。
+void testPolygonPathMergeDirect()
+{
+    // 四边形区域 0(0,0) 1(2,0) 3(2,1) 2(0,1)，内部顶点 4(1,0.4) 风扇三角化。
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 5);
+    mesh.vert[0].P() = vcg::Point3d(0, 0, 0);
+    mesh.vert[1].P() = vcg::Point3d(2, 0, 0);
+    mesh.vert[2].P() = vcg::Point3d(0, 1, 0);
+    mesh.vert[3].P() = vcg::Point3d(2, 1, 0);
+    mesh.vert[4].P() = vcg::Point3d(1, 0.4, 0);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[4]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[4]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[3], &mesh.vert[2], &mesh.vert[4]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[2], &mesh.vert[0], &mesh.vert[4]);
+    mesh.face.EnableFFAdjacency();
+    mesh.face.EnableMark();
+    mesh.vert.EnableMark();
+    vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+    vcg::tri::UpdateNormal<CMeshOD>::PerFace(mesh);
+    for (auto& face : mesh.face)
+    {
+        face.IMark() = 1;
+    }
+
+    MeshCutByMark::Polyline polyline;
+    polyline.type = MeshCutByMark::CUT_EDGE_NON_MANIFOLD;
+    polyline.vertexIndices = { 0, 4 };
+    MeshCutByMark::LocalMeshCutManager manager;
+    MeshCutByMark::LocalCutResult result;
+    manager.prepareLocalCutPolygon(&mesh, { 0, 1, 2, 3 }, { polyline }, 1, result);
+    REQUIRE(!result.exact.skipped);
+
+    MeshCutByMark::RegionMarker regionMarker;
+    regionMarker.initNewMark(&mesh);
+    std::map<jaslmc::ExactPoint, int> existingPointToVertex;
+    for (int vi = 0; vi < (int)mesh.vert.size(); vi++)
+    {
+        const auto& p = mesh.vert[vi].P();
+        existingPointToVertex[jaslmc::ExactPoint(p.X(), p.Y(), p.Z())] = vi;
+    }
+    int newMarkCounter = 1;
+    manager.mergeLocalCutPolygon(&mesh, result, regionMarker, newMarkCounter,
+        existingPointToVertex);
+
+    // 面不被切分、不被复制；两个子区域 newMark 互异且 > 0（无孤儿）。
+    REQUIRE((int)mesh.face.size() == 4);
+    REQUIRE(newMarkCounter == 3);
+    REQUIRE(regionMarker.getNewMark(0) != 0);
+    REQUIRE(regionMarker.getNewMark(1) != 0);
+    REQUIRE(regionMarker.getNewMark(2) != 0);
+    REQUIRE(regionMarker.getNewMark(3) != 0);
+    REQUIRE(regionMarker.getNewMark(0) != regionMarker.getNewMark(3));
+    // 切线从右边 (2,0)-(2,1) 内部穿出 → 恰好追加 1 个切点孤立顶点。
+    REQUIRE((int)mesh.vert.size() == 6);
+    // 两个 newMark 各有边界环；环内下标全部有效，且包含新增切点顶点。
+    REQUIRE(result.polyLoops.size() == 2);
+    std::set<int> loopVerts;
+    for (const auto& entry : result.polyLoops)
+    {
+        REQUIRE(!entry.second.empty());
+        for (const auto& loop : entry.second)
+        {
+            REQUIRE(loop.size() >= 3);
+            for (int vi : loop)
+            {
+                REQUIRE(vi >= 0);
+                REQUIRE(vi < (int)mesh.vert.size());
+                loopVerts.insert(vi);
+            }
+        }
+    }
+    bool hasCutVertex = false;
+    for (int vi : loopVerts)
+    {
+        if (vi >= 5)
+        {
+            hasCutVertex = true;
+        }
+    }
+    REQUIRE(hasCutVertex);
+    std::cout << "polygonPathMergeDirect: faces=" << mesh.face.size()
+        << " verts=" << mesh.vert.size()
+        << " loops=" << result.polyLoops.size() << std::endl;
+    std::cout << "testPolygonPathMergeDirect passed" << std::endl;
+}
+
+// 回归（多边形切割路径全管线）：SplitMeshByMarkAndEdge 在多边形路径下
+// 不再产生孤儿面风暴 —— 面数不变、区域数等于任务数、inTris 恰好划分
+// 全部存活面、mark 保留、边界环非空。
+void testPolygonPathGridCut()
+{
+    // 复用 testNonManifoldEdgeRegion 拓扑：边 (1,2) 三面共边（非流形），
+    // 三个 flood 任务互不连通，各产出 1 个区域，共 3 个。
+    CMeshOD mesh;
+    vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 5);
+    mesh.vert[0].P() = vcg::Point3d(0, 0, 0);
+    mesh.vert[1].P() = vcg::Point3d(1, 0, 0);
+    mesh.vert[2].P() = vcg::Point3d(0, 1, 0);
+    mesh.vert[3].P() = vcg::Point3d(2, 0, 0);
+    mesh.vert[4].P() = vcg::Point3d(0, 2, 0);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[2]);
+    vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[4], &mesh.vert[2]);
+    mesh.face.EnableMark();
+    mesh.vert.EnableMark();
+    mesh.face[0].IMark() = 1;
+    mesh.face[1].IMark() = 1;
+    mesh.face[2].IMark() = 2;
+
+    JasMeshMarkAndCutSplit splitter;
+    splitter.SetMainMesh(&mesh);
+    std::vector<JasMeshMarkAndCutSplit::splitReg> regions;
+    splitter.SplitMeshByMarkAndEdge(regions);
+
+    // 多边形路径不修改任何面：无重复面、无删除。
+    REQUIRE((int)mesh.face.size() == 3);
+    int liveFaces = 0;
+    for (const auto& face : mesh.face)
+    {
+        if (!face.IsD())
+        {
+            liveFaces++;
+        }
+    }
+    REQUIRE(liveFaces == 3);
+    REQUIRE(regions.size() == 3);
+
+    std::set<int> coveredFaces;
+    std::set<int> newMarks;
+    for (const auto& region : regions)
+    {
+        REQUIRE(region.newMark > 0);
+        newMarks.insert(region.newMark);
+        REQUIRE(region.mark == 1 || region.mark == 2);
+        REQUIRE(!region.inTris.empty());
+        REQUIRE(region.boundaries.size() >= 1);
+        REQUIRE(region.boundaries[0].size() >= 3);
+        REQUIRE(region.boundlines.size() >= 3);
+        for (int faceIndex : region.inTris)
+        {
+            coveredFaces.insert(faceIndex);
+        }
+    }
+    REQUIRE((int)newMarks.size() == 3);
+    REQUIRE((int)coveredFaces.size() == liveFaces);
+    std::cout << "polygonPathGridCut: regions=" << regions.size()
+        << " faces=" << liveFaces << std::endl;
+    std::cout << "testPolygonPathGridCut passed" << std::endl;
+}
+
+void testCutPathModeSelect()
+{
+    // 同一拓扑分别用两种切割路径跑全管线：外部参数 SetCutPathMode 决定
+    // 走 prepareLocalCutPolygon（多边形）还是 prepareLocalCut（三角形）。
+    // 两条路径的输出契约相同（retRegs / splitReg），差异在网格改写：
+    // 三角形路径真实切割写回（面被切分、面数增长），多边形路径不切分
+    // 任何面（切点追加为孤立顶点）。
+    // 拓扑：四边形风扇 0-1-3-2（内部顶点 4，面 0..3 mark=1）+ 翻折面
+    // (0,4,5) mark=2，使边 (0,4) 三面共边（非流形）。区域 A（4 面）的
+    // 切割折线 {0,4} 端点 4 不在 A 的边界顶点集内 → 延长穿出面 1 内部，
+    // 从右边 (2,0)-(2,1) 中点附近穿出 → 真实切割（非退化）。
+    auto makeMesh = [](CMeshOD& mesh)
+    {
+        vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 6);
+        mesh.vert[0].P() = vcg::Point3d(0, 0, 0);
+        mesh.vert[1].P() = vcg::Point3d(2, 0, 0);
+        mesh.vert[2].P() = vcg::Point3d(0, 1, 0);
+        mesh.vert[3].P() = vcg::Point3d(2, 1, 0);
+        mesh.vert[4].P() = vcg::Point3d(1, 0.4, 0);
+        mesh.vert[5].P() = vcg::Point3d(0.5, -0.3, 0.5); // 翻折出平面，避免共面重叠
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[1], &mesh.vert[4]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[4]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[3], &mesh.vert[2], &mesh.vert[4]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[2], &mesh.vert[0], &mesh.vert[4]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[4], &mesh.vert[5]);
+        mesh.face.EnableFFAdjacency();
+        mesh.face.EnableMark();
+        mesh.vert.EnableMark();
+        vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+        vcg::tri::UpdateNormal<CMeshOD>::PerFace(mesh);
+        mesh.face[0].IMark() = 1;
+        mesh.face[1].IMark() = 1;
+        mesh.face[2].IMark() = 1;
+        mesh.face[3].IMark() = 1;
+        mesh.face[4].IMark() = 2;
+    };
+    auto countLiveFaces = [](CMeshOD& mesh)
+    {
+        int liveFaces = 0;
+        for (const auto& face : mesh.face)
+        {
+            if (!face.IsD())
+            {
+                liveFaces++;
+            }
+        }
+        return liveFaces;
+    };
+    auto checkRegionsValid =
+        [](const std::vector<JasMeshMarkAndCutSplit::splitReg>& regions, int liveFaces)
+    {
+        REQUIRE(regions.size() >= 3);
+        int markOneRegions = 0;
+        std::set<int> coveredFaces;
+        std::set<int> newMarks;
+        for (const auto& region : regions)
+        {
+            REQUIRE(region.newMark > 0);
+            newMarks.insert(region.newMark);
+            REQUIRE(region.mark == 1 || region.mark == 2);
+            if (region.mark == 1)
+            {
+                markOneRegions++;
+            }
+            REQUIRE(!region.inTris.empty());
+            REQUIRE(region.boundaries.size() >= 1);
+            REQUIRE(region.boundaries[0].size() >= 3);
+            for (int faceIndex : region.inTris)
+            {
+                coveredFaces.insert(faceIndex);
+            }
+        }
+        // 切割线把区域 A 分成两半 + 翻折面单独一区，两条路径一致。
+        REQUIRE(markOneRegions == 2);
+        REQUIRE((int)newMarks.size() == (int)regions.size());
+        REQUIRE((int)coveredFaces.size() == liveFaces);
+    };
+
+    // 三角形路径：真实切割写回，面 1 被切分，面数增长。
+    {
+        CMeshOD mesh;
+        makeMesh(mesh);
+        JasMeshMarkAndCutSplit splitter;
+        splitter.SetMainMesh(&mesh);
+        splitter.SetCutPathMode(JasMeshMarkAndCutSplit::CUT_PATH_TRIANGLE);
+        std::vector<JasMeshMarkAndCutSplit::splitReg> regions;
+        splitter.SplitMeshByMarkAndEdge(regions);
+        const int liveFaces = countLiveFaces(mesh);
+        REQUIRE(liveFaces > 5);
+        checkRegionsValid(regions, liveFaces);
+        std::cout << "cutPathModeSelect triangle: regions=" << regions.size()
+            << " faces=" << liveFaces << std::endl;
+    }
+
+    // 多边形路径：不切分任何面（5 面），仅追加 1 个切点孤立顶点；
+    // 同样输出完整 retRegs（区域划分与三角形路径一致）。
+    {
+        CMeshOD mesh;
+        makeMesh(mesh);
+        JasMeshMarkAndCutSplit splitter;
+        splitter.SetMainMesh(&mesh);
+        splitter.SetCutPathMode(JasMeshMarkAndCutSplit::CUT_PATH_POLYGON);
+        std::vector<JasMeshMarkAndCutSplit::splitReg> regions;
+        splitter.SplitMeshByMarkAndEdge(regions);
+        const int liveFaces = countLiveFaces(mesh);
+        REQUIRE(liveFaces == 5);
+        REQUIRE((int)mesh.vert.size() == 7);
+        checkRegionsValid(regions, liveFaces);
+        std::cout << "cutPathModeSelect polygon: regions=" << regions.size()
+            << " faces=" << liveFaces << " verts=" << (int)mesh.vert.size() << std::endl;
+    }
+    std::cout << "testCutPathModeSelect passed" << std::endl;
+}
+
+// 多边形路径跨区域切点共形回归：
+//   机制一 —— 区域 A 内的非流形缝（u-v + 翻折面）延长后穿出 A 的边界，
+//   穿出点 X 落在 A 与邻域 B 共享的 mark-diff 边 (M0,M1) 内部。该缝只
+//   属于 A 的切割边集合，B 不沿此线切割，因此 B 的边界环原本不细分该边
+//   （T 形结）；跨区域切点 splice 后，所有触及该边的输出环必须共享同一
+//   顶点细分序列。
+//   机制二 —— 块 2 中 B 侧也有一条缝（不同高度），两侧各自产生切点，
+//   共享边上出现两个切点，双方环都必须同时含两点且顺序一致。
+void testPolygonPathSharedEdgeConformity()
+{
+    // 在 (m0,m1) 线段上收集所有输出边界环的顶点链（按沿线参数排序）；
+    // 共形 = 存在全局有序序列 S，使每条链都是 S 的连续子序列
+    // （每条链参数序与 S 一致，反向遍历的环排序后同样规范）。
+    auto chainsConform = [](const CMeshOD& mesh,
+        const std::vector<JasMeshMarkAndCutSplit::splitReg>& regions,
+        int m0, int m1)
+    {
+        const vcg::Point3d p0 = mesh.vert[m0].P();
+        const vcg::Point3d p1 = mesh.vert[m1].P();
+        const vcg::Point3d d = p1 - p0;
+        auto onSegmentParam = [&](int vi, double& tOut)
+        {
+            const vcg::Point3d ap = mesh.vert[vi].P() - p0;
+            const double t = (ap * d) / d.SquaredNorm();
+            const vcg::Point3d closest = p0 + d * t;
+            tOut = t;
+            return (mesh.vert[vi].P() - closest).Norm() < 1e-9 &&
+                t >= -1e-9 && t <= 1.0 + 1e-9;
+        };
+        std::vector<std::vector<std::pair<double, int>>> chains;
+        for (const auto& region : regions)
+        {
+            for (const auto& loop : region.boundaries)
+            {
+                std::vector<std::pair<double, int>> onSeg;
+                for (int vi : loop)
+                {
+                    double t = 0.0;
+                    if (onSegmentParam(vi, t))
+                    {
+                        onSeg.push_back({ t, vi });
+                    }
+                }
+                if (onSeg.size() >= 2)
+                {
+                    std::sort(onSeg.begin(), onSeg.end());
+                    chains.push_back(std::move(onSeg));
+                }
+            }
+        }
+        if (chains.empty())
+        {
+            return false;
+        }
+        std::vector<std::pair<double, int>> sequence;
+        for (const auto& chain : chains)
+        {
+            for (const auto& tv : chain)
+            {
+                bool known = false;
+                for (const auto& sv : sequence)
+                {
+                    if (sv.second == tv.second)
+                    {
+                        known = true;
+                        break;
+                    }
+                }
+                if (!known)
+                {
+                    sequence.push_back(tv);
+                }
+            }
+        }
+        std::sort(sequence.begin(), sequence.end());
+        for (const auto& chain : chains)
+        {
+            int start = -1;
+            for (int i = 0; i < (int)sequence.size(); i++)
+            {
+                if (sequence[i].second == chain.front().second)
+                {
+                    start = i;
+                    break;
+                }
+            }
+            if (start < 0 || start + (int)chain.size() > (int)sequence.size())
+            {
+                return false;
+            }
+            for (int k = 0; k < (int)chain.size(); k++)
+            {
+                if (sequence[start + k].second != chain[k].second)
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+    auto findVertex = [](const CMeshOD& mesh, const vcg::Point3d& p)
+    {
+        for (int i = 0; i < (int)mesh.vert.size(); i++)
+        {
+            if (!mesh.vert[i].IsD() && (mesh.vert[i].P() - p).Norm() < 1e-9)
+            {
+                return i;
+            }
+        }
+        return -1;
+    };
+
+    // 块 1（机制一）：A 左侧六三角形 + 缝翻折面（mark=1），B 右侧两三角
+    // 形（mark=2）。缝 u-v 端点都在 A 内部 → 双端延长，线 y=0.4 从共享边
+    // (M0,M1) 内部 (4,0.4) 穿出；B 无非流形折线，不被切。
+    {
+        CMeshOD mesh;
+        vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 9);
+        mesh.vert[0].P() = vcg::Point3d(0, 0, 0);    // L0
+        mesh.vert[1].P() = vcg::Point3d(0, 1, 0);    // L1
+        mesh.vert[2].P() = vcg::Point3d(1, 0.4, 0);  // u 缝起点（A 内部）
+        mesh.vert[3].P() = vcg::Point3d(3, 0.4, 0);  // v 缝终点（A 内部）
+        mesh.vert[4].P() = vcg::Point3d(4, 0, 0);    // M0 共享边下端
+        mesh.vert[5].P() = vcg::Point3d(4, 1, 0);    // M1 共享边上端
+        mesh.vert[6].P() = vcg::Point3d(2, 0.4, 1);  // 翻折面顶点，使 u-v 三面共边
+        mesh.vert[7].P() = vcg::Point3d(8, 0, 0);    // R0
+        mesh.vert[8].P() = vcg::Point3d(8, 1, 0);    // R1
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[4], &mesh.vert[3]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[3], &mesh.vert[2]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[2], &mesh.vert[1]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[2], &mesh.vert[3]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[5]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[4], &mesh.vert[5], &mesh.vert[3]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[2], &mesh.vert[3], &mesh.vert[6]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[4], &mesh.vert[7], &mesh.vert[8]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[4], &mesh.vert[8], &mesh.vert[5]);
+        mesh.face.EnableFFAdjacency();
+        mesh.face.EnableMark();
+        mesh.vert.EnableMark();
+        vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+        vcg::tri::UpdateNormal<CMeshOD>::PerFace(mesh);
+        for (int fi = 0; fi < 7; fi++)
+        {
+            mesh.face[fi].IMark() = 1;
+        }
+        mesh.face[7].IMark() = 2;
+        mesh.face[8].IMark() = 2;
+
+        JasMeshMarkAndCutSplit splitter;
+        splitter.SetMainMesh(&mesh);
+        splitter.SetCutPathMode(JasMeshMarkAndCutSplit::CUT_PATH_POLYGON);
+        std::vector<JasMeshMarkAndCutSplit::splitReg> regions;
+        splitter.SplitMeshByMarkAndEdge(regions);
+
+        int liveFaces = 0;
+        for (const auto& face : mesh.face)
+        {
+            if (!face.IsD())
+            {
+                liveFaces++;
+            }
+        }
+        REQUIRE(liveFaces == 9);       // 多边形路径不切分任何面
+        REQUIRE(regions.size() == 4);  // A 两片 + 翻折面 + B
+        REQUIRE(findVertex(mesh, vcg::Point3d(4, 0.4, 0)) >= 0); // 切点已追加
+        REQUIRE(chainsConform(mesh, regions, 4, 5));
+        std::cout << "sharedEdgeConformity block1: regions=" << regions.size()
+            << " faces=" << liveFaces << std::endl;
+    }
+
+    // 块 2（机制二）：B 侧也有自己的缝（y=0.6，翻折面 11），A 侧缝 y=0.4。
+    // 两条线各自在共享边 (M0,M1) 上产生切点 (4,0.4) 与 (4,0.6)，四个
+    // 分片环都必须按同一顺序细分该边。
+    {
+        CMeshOD mesh;
+        vcg::tri::Allocator<CMeshOD>::AddVertices(mesh, 12);
+        mesh.vert[0].P() = vcg::Point3d(0, 0, 0);    // L0
+        mesh.vert[1].P() = vcg::Point3d(0, 1, 0);    // L1
+        mesh.vert[2].P() = vcg::Point3d(1, 0.4, 0);  // u A 侧缝起点
+        mesh.vert[3].P() = vcg::Point3d(3, 0.4, 0);  // v A 侧缝终点
+        mesh.vert[4].P() = vcg::Point3d(4, 0, 0);    // M0 共享边下端
+        mesh.vert[5].P() = vcg::Point3d(4, 1, 0);    // M1 共享边上端
+        mesh.vert[6].P() = vcg::Point3d(2, 0.4, 1);  // 翻折面顶点，使 u-v 三面共边
+        mesh.vert[7].P() = vcg::Point3d(8, 0, 0);    // R0
+        mesh.vert[8].P() = vcg::Point3d(8, 1, 0);    // R1
+        mesh.vert[9].P() = vcg::Point3d(5, 0.6, 0);  // u2 B 侧缝起点
+        mesh.vert[10].P() = vcg::Point3d(7, 0.6, 0);  // v2 B 侧缝终点
+        mesh.vert[11].P() = vcg::Point3d(6, 0.6, 1);  // 翻折面顶点，使 u2-v2 三面共边
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[4], &mesh.vert[3]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[3], &mesh.vert[2]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[0], &mesh.vert[2], &mesh.vert[1]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[2], &mesh.vert[3]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[1], &mesh.vert[3], &mesh.vert[5]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[4], &mesh.vert[5], &mesh.vert[3]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[2], &mesh.vert[3], &mesh.vert[6]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[4], &mesh.vert[7], &mesh.vert[10]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[4], &mesh.vert[10], &mesh.vert[9]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[4], &mesh.vert[9], &mesh.vert[5]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[5], &mesh.vert[9], &mesh.vert[10]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[5], &mesh.vert[10], &mesh.vert[8]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[7], &mesh.vert[8], &mesh.vert[10]);
+        vcg::tri::Allocator<CMeshOD>::AddFace(mesh, &mesh.vert[9], &mesh.vert[10], &mesh.vert[11]);
+        mesh.face.EnableFFAdjacency();
+        mesh.face.EnableMark();
+        mesh.vert.EnableMark();
+        vcg::tri::UpdateTopology<CMeshOD>::FaceFace(mesh);
+        vcg::tri::UpdateNormal<CMeshOD>::PerFace(mesh);
+        for (int fi = 0; fi < 7; fi++)
+        {
+            mesh.face[fi].IMark() = 1;
+        }
+        for (int fi = 7; fi < 14; fi++)
+        {
+            mesh.face[fi].IMark() = 2;
+        }
+
+        JasMeshMarkAndCutSplit splitter;
+        splitter.SetMainMesh(&mesh);
+        splitter.SetCutPathMode(JasMeshMarkAndCutSplit::CUT_PATH_POLYGON);
+        std::vector<JasMeshMarkAndCutSplit::splitReg> regions;
+        splitter.SplitMeshByMarkAndEdge(regions);
+
+        int liveFaces = 0;
+        for (const auto& face : mesh.face)
+        {
+            if (!face.IsD())
+            {
+                liveFaces++;
+            }
+        }
+        REQUIRE(liveFaces == 14);      // 多边形路径不切分任何面
+        REQUIRE(regions.size() == 6);  // A 两片 + 翻折面 + B 两片 + 翻折面
+        REQUIRE(findVertex(mesh, vcg::Point3d(4, 0.4, 0)) >= 0);
+        REQUIRE(findVertex(mesh, vcg::Point3d(4, 0.6, 0)) >= 0);
+        REQUIRE(chainsConform(mesh, regions, 4, 5));
+        std::cout << "sharedEdgeConformity block2: regions=" << regions.size()
+            << " faces=" << liveFaces << std::endl;
+    }
+    std::cout << "testPolygonPathSharedEdgeConformity passed" << std::endl;
+}
+
 int main() {
     testEdgeHash();
     testBuildEdgeInfo();
@@ -1857,5 +2370,9 @@ int main() {
     testSeamRedirectAfterSplit();
     testExistingVertexReuse();
     testComplexCutStress();
+    testPolygonPathMergeDirect();
+    testPolygonPathGridCut();
+    testCutPathModeSelect();
+    testPolygonPathSharedEdgeConformity();
     return 0;
 }

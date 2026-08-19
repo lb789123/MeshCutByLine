@@ -66,6 +66,32 @@ public:
         m_debugOutputDir = dir;
     }
 
+    // 切割路径选择（外部参数）：决定 Phase 2 走哪条切割路线，两条路线
+    // 最终都输出 retRegs（splitReg 列表），仅切割策略不同：
+    //   CUT_PATH_TRIANGLE：三角形路径（prepareLocalCut + mergeLocalCut +
+    //                      stitchAllSeams），真实切割并写回全局网格，
+    //                      原始三角形会被切分；
+    //   CUT_PATH_POLYGON：多边形路径（prepareLocalCutPolygon +
+    //                      mergeLocalCutPolygon），不切分原始三角形，
+    //                      被切线穿过的三角形按质心归属分片（近似划分）。
+    // 多边形路径下两类区域内部回退三角形路径（正确性保障）：全局星形顶点、
+    // 带洞区域（边界多环），见 .cpp 路由注释。
+    enum CutPathMode
+    {
+        CUT_PATH_TRIANGLE = 0,
+        CUT_PATH_POLYGON = 1
+    };
+
+    void SetCutPathMode(CutPathMode mode)
+    {
+        m_cutPathMode = mode;
+    }
+
+    CutPathMode GetCutPathMode() const
+    {
+        return m_cutPathMode;
+    }
+
     // 返回分割后的多个三维多边形
     void SplitMeshByMarkAndEdge(std::vector<splitReg>& retRegs);
 
@@ -98,6 +124,7 @@ private:
     MeshCutByMark::LocalMeshCutManager m_localMeshCut; // 局部 mesh 切割管线
     int m_newMarkCounter = 0;                          // 新区域标记计数器
     bool m_debug = false;                              // 调试输出开关
+    CutPathMode m_cutPathMode = CUT_PATH_POLYGON;      // 切割路径（外部参数）
     std::string m_debugOutputDir = "debug_output/";    // 调试输出目录
     int m_debugIterCounter = 0;                        // 主循环迭代计数器
 };
